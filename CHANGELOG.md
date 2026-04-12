@@ -4,6 +4,95 @@ All notable changes to jabali-terminal are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 uses semantic versioning for tags.
 
+## [Unreleased]
+
+Post-v0.1.0 work. Nothing here is breaking for existing installs — the
+reverse-proxy migration from nginx → Caddy matches what the panel was
+actually running on, and every new config key has a backward-compatible
+default.
+
+### Added
+
+- **`sessions_ui_enabled` config key** — new flag in
+  `/etc/jabali-terminal/jabali-terminal.conf`. Default `"true"` (shows
+  the Terminal Sessions audit-log browser, same as before). Set to
+  `"false"` to hide the Filament page + nav item. Logging is unaffected:
+  the daemon still writes every stdin/stdout transcript to
+  `/var/log/jabali-terminal/sessions/<id>.log` and HMAC-seals it on
+  close. Operators who prefer to read transcripts off-disk (or rsync
+  them off-box) can keep the panel nav clean.
+- **Root Terminal in the main nav** — moved out of the `Tools` group,
+  positioned right after `Services` as a top-level entry.
+- **Conditional 2FA re-auth** — admins with Fortify 2FA provisioned
+  still must submit a fresh TOTP every session; admins without 2FA
+  configured skip that field. Password re-check, rate limit (3/min per
+  admin+ip), and 15-minute lockout after 5 failed attempts are unchanged.
+
+### Changed
+
+- **Reverse proxy: Caddy instead of nginx.** `install.sh` now writes a
+  marker-guarded block into `/etc/jabali/Caddyfile`. The panel has
+  always been FrankenPHP/Caddy on `:8443` — the previous nginx include
+  would have landed the terminal proxy inside a user vhost. The nginx
+  code path is gone. `header_up X-Real-IP {remote_host}` is set
+  explicitly (SEC-REV-6; Caddy doesn't set it by default).
+- **xterm.js → `@xterm/*` scoped packages.** The legacy `xterm` /
+  `xterm-addon-fit` / `xterm-addon-web-links` packages were deprecated
+  and their internal APIs drifted out of sync with modern addons. The
+  bundle now pins:
+  - `@xterm/xterm` `^5.5.0`
+  - `@xterm/addon-fit` `^0.10.0`
+  - `@xterm/addon-web-links` `^0.11.0`
+  - `@xterm/addon-canvas` `^0.7.0` (new — see Fixed below)
+- **Filament-native UI primitives.** Re-auth, connection status, and
+  session-closed panels now use `x-filament::section`, `x-filament::button`,
+  `x-filament::badge`, `x-filament::input` instead of hand-rolled Tailwind
+  chrome. Matches the rest of the panel's look and feel.
+- **Route registration moved to `JabaliTerminalServiceProvider::boot`.**
+  `POST /jabali-admin/terminal/session` + its named RateLimiter used to
+  live in the plugin's `boot()`, which fires too late (after middleware)
+  and not at all during CLI commands like `route:cache`. The
+  ServiceProvider is wired via the parent panel's `bootstrap/providers.php`
+  with a `class_exists()` guard so the panel still boots when the addon
+  is uninstalled.
+
+### Fixed
+
+- **Blank xterm.js on every connect.** xterm.js 5.x does not ship a
+  renderer in the core package — a renderer addon must be loaded and
+  activated to populate `_renderService._renderer.value`. Without one,
+  the first `fit()` / `resize()` / `write()` schedules an internal
+  `_refreshAnimationFrame` that reads `_renderer.value.dimensions` and
+  throws async with `"can't access property 'dimensions',
+  this._renderer.value is undefined"` from xterm's own rAF — not
+  catchable by any user-level `try/catch`. `@xterm/addon-canvas` now
+  loads after `term.open()` and installs the canvas renderer
+  synchronously via `setRenderer()` in `activate()`. Paired blade-side:
+  mount deferred via `$nextTick + requestAnimationFrame` with a
+  zero-size retry guard, PTY bytes arriving before mount completes are
+  buffered and flushed on mount, and every `fit()` call site is wrapped
+  in a `safeFit()` helper.
+- **`wss://localhost/terminal-ws` when the browser wasn't on localhost.**
+  The daemon's `ws_url` field contains `request.host` from inside the
+  unix socket — which is always `"localhost"`. The panel now ignores
+  that field and builds the URL from `$request->getHttpHost()` +
+  `isSecure()`.
+- **"daemon unavailable" after fresh install.** The conf file was seeded
+  `0640 root:root`, so PHP-FPM under `www-data` couldn't read
+  `hmac_secret` and `JabaliTerminalClient::isAvailable()` silently
+  returned false. `install.sh` now seeds (and re-seeds, on idempotent
+  re-install) as `0640 root:www-data`.
+- **Stray `@vite` in the Blade JavaScript comment.** Blade compiles
+  `@vite` even inside `//` comments because Blade parses before JS
+  lexing. Wrapped the references in `{{-- ... --}}`.
+- **Filament 4 `navigationGroup` type** must be `UnitEnum|string|null`,
+  not `?string`. Parent panel's Filament 4 upgrade exposed the mismatch.
+- **`make test` on a clean checkout.** The daemon Makefile now
+  bootstraps `.venv/` via `pyproject.toml` dev extras on first use
+  instead of assuming the operator has one set up.
+- **pytest async warnings** — CI config moved to `asyncio_mode=auto`
+  and runs from `daemon/` so the test root matches the package root.
+
 ## [0.1.0] — 2026-04-12
 
 First release. Browser-based root shell for Jabali Panel. Architecture

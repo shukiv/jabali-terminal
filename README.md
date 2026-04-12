@@ -40,16 +40,40 @@ curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-terminal/main/install
     token → PTY attach. No token ever in URL.
 - **Panel plugin** (`panel/`) — Filament plugin autodiscovered by
   `class_exists()` in `AdminPanelProvider`. Two pages: Terminal (xterm.js
-  view + re-auth modal) and Sessions (last 100 transcripts). Dedicated
-  `POST /jabali-admin/terminal/session` route does the re-auth; rate
-  limited at 3/min per (admin, ip) and locked out after 5 failed attempts
-  for 15 minutes.
+  view + re-auth modal) and an optional Sessions page (last 100
+  transcripts, off by default via `sessions_ui_enabled="false"`).
+  Dedicated `POST /jabali-admin/terminal/session` route does the re-auth;
+  rate limited at 3/min per (admin, ip) and locked out after 5 failed
+  attempts for 15 minutes.
+
+## Configuration
+
+All runtime config lives in `/etc/jabali-terminal/jabali-terminal.conf`
+(`0640 root:www-data` — PHP-FPM needs to read `hmac_secret`). Full example
+in [`configs/jabali-terminal.conf.example`](configs/jabali-terminal.conf.example).
+
+Commonly tweaked knobs:
+
+| Key                        | Default                                           | Purpose                                                                 |
+|----------------------------|---------------------------------------------------|-------------------------------------------------------------------------|
+| `session_idle_seconds`     | `300`                                             | Idle gate — fires when both stdin AND stdout have been quiet this long. |
+| `session_hard_seconds`     | `3600`                                            | Hard cap — force-close regardless of activity.                          |
+| `max_concurrent_sessions`  | `4`                                               | Daemon-wide concurrency ceiling (not per-admin).                        |
+| `allowed_ips`              | empty (local-only)                                | Comma-separated allow-list for the panel client that POSTs to the mint. |
+| `shell`                    | `/bin/bash`                                       | Shell exec'd under the PTY (must be interactive login-capable).         |
+| `sessions_ui_enabled`      | `"true"`                                          | Show the Terminal Sessions audit-log browser page. Set `"false"` to hide the Filament page + nav; **logging is unaffected** — transcripts are still written and HMAC-sealed under `/var/log/jabali-terminal/sessions/`. |
+
+After editing the conf, `systemctl restart jabali-terminal` (daemon-side
+changes) and/or `systemctl restart jabali-panel` (panel-side changes like
+`sessions_ui_enabled`).
 
 ## Status
 
-Steps 1–9 of `~/projects/jabali/plans/jabali-terminal-addon.md` complete.
-Remaining:
+v0.1.0 tagged 2026-04-12. Steps 1–10 of `~/projects/jabali/plans/jabali-terminal-addon.md`
+complete, end-to-end E2E pass documented in
+[`docs/E2E_TEST_REPORT.md`](docs/E2E_TEST_REPORT.md).
 
-- **Step 10** — end-to-end install → use → uninstall on a fresh LXC
-  (documented in `docs/E2E_TEST_REPORT.md` when done).
-- **Step 11** — release tag + docs refresh.
+Post-0.1.0 work tracked in [`CHANGELOG.md`](CHANGELOG.md) under
+`[Unreleased]` — notably the Caddy migration, `@xterm/*` package
+migration + canvas renderer fix, Filament-native UI, and the optional
+Sessions page toggle.

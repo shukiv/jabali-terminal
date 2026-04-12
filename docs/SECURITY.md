@@ -28,7 +28,7 @@ review of the construction plan at
 | A | **Stolen admin session cookie**           | Panel session hijack                               | Fresh password re-prompt per terminal open (+ 2FA when the admin has Fortify 2FA enrolled); IP-bound token |
 | B | **XSS on the panel**                      | Injected JS in the admin browser                   | Token never leaves memory / never in URL (SEC-REV-2); CSP; framebusting |
 | C | **Compromised admin account**             | Attacker knows password + 2FA seed                 | Out-of-scope: admin=root here; the only damper is audit trail       |
-| D | **Insider abuse** (legitimate admin)      | Direct login                                       | HMAC-sealed audit log; Sessions page lists all opens; idle+hard TTL |
+| D | **Insider abuse** (legitimate admin)      | Direct login                                       | HMAC-sealed audit log under `/var/log/jabali-terminal/sessions/` (browser view optional, see §4); idle+hard TTL |
 | E | **Network attacker on the same LAN**      | Sees WS traffic                                    | TLS termination at Caddy (:8443); daemon listens on unix socket only |
 | F | **Root attacker on the host**             | Already has root through some other path           | Out-of-scope: no defence is meaningful; but note the audit `.sig` file makes post-facto tampering detectable |
 | G | **Replayed token URL** (shared over chat) | Admin shares a URL they think is a bookmark        | Token TTL ≤60s; single-use nonce; IP-bound; handshake-challenge (token not in URL) |
@@ -182,6 +182,20 @@ Root on the host can still overwrite either the log or the `.sig`. The
 `.sig` value lets offline verification detect that tampering happened — we
 lose confidentiality but we don't lose detection.
 
+### 4.1 Browser view (optional)
+
+The panel ships a read-only "Terminal Sessions" Filament page that lists
+the last 100 transcripts and renders an individual transcript on demand
+(1 MiB cap, path whitelist enforced by the daemon — the page never
+receives raw HTML).
+
+The page is gated by `sessions_ui_enabled` in `jabali-terminal.conf`
+(default `"true"`). Setting it to `"false"` hides the nav entry and
+unregisters the route; the daemon still writes and HMAC-seals every
+transcript, so the audit control in the table above is unaffected.
+Operators who read transcripts off-disk (or rsync them off-box) can
+disable the UI without loss of forensic capability.
+
 ---
 
 ## 5. Nonce store (SEC-REV-1)
@@ -277,7 +291,8 @@ All four live in the daemon config or Laravel config; none are hardcoded.
 
 ## 10. Session UX — what the admin sees
 
-1. Admin navigates to `Tools -> Terminal` in Filament admin.
+1. Admin navigates to `Terminal` in the Filament side nav (top-level,
+   positioned right after `Services`).
 2. Re-auth modal blocks the page: "Enter your password and 2FA code to open
    a terminal."
 3. On success, modal closes, xterm.js attaches, prompt appears.
