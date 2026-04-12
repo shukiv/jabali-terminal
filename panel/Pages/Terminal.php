@@ -31,9 +31,14 @@ class Terminal extends Page
     // Filament 4 requires the property type to match the parent exactly
     // (invariant for typed properties): UnitEnum|string|null. A plain
     // ?string declaration would fatal at class load.
-    protected static UnitEnum|string|null $navigationGroup = 'Tools';
+    //
+    // Root Terminal lives in the main navigation right after "Services"
+    // (Services has navigationSort 10). No custom navigationGroup — stays
+    // in the default top-level section so operators don't have to scroll
+    // to the "Tools" group for a frequently-used action.
+    protected static UnitEnum|string|null $navigationGroup = null;
 
-    protected static ?int $navigationSort = 50;
+    protected static ?int $navigationSort = 11;
 
     protected static ?string $slug = 'terminal';
 

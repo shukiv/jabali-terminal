@@ -25,9 +25,11 @@ class Sessions extends Page
 {
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-clock';
 
-    protected static UnitEnum|string|null $navigationGroup = 'Tools';
+    // Terminal Sessions sits immediately below Root Terminal (sort 11),
+    // same top-level section as Services.
+    protected static UnitEnum|string|null $navigationGroup = null;
 
-    protected static ?int $navigationSort = 51;
+    protected static ?int $navigationSort = 12;
 
     protected static ?string $slug = 'terminal/sessions';
 
