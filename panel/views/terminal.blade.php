@@ -122,6 +122,16 @@
             let token = null;
             let ws = null;
             let term = null;
+            // Three-state machine for the WS receive path. 'challenge' means we
+            // still expect the daemon's JSON challenge as the first frame;
+            // 'data' means PTY bytes from here on. `pending` buffers PTY bytes
+            // that arrive after the auth frame is sent but before the xterm
+            // instance has finished mounting (Alpine's DOM flip + a layout
+            // frame). Without this, a fast prompt byte would race ahead of
+            // `term` being set and either close the WS (mistaken for a second
+            // challenge) or throw inside term.writeBytes.
+            let wsPhase = 'challenge';
+            let pending = [];
 
             return {
                 stage: 'auth',
@@ -215,7 +225,7 @@
 
                     ws.addEventListener('message', async (evt) => {
                         // First message must be the challenge (SEC-REV-2).
-                        if (term === null) {
+                        if (wsPhase === 'challenge') {
                             let msg;
                             try {
                                 msg = JSON.parse(typeof evt.data === 'string' ? evt.data : new TextDecoder().decode(evt.data));
@@ -237,16 +247,32 @@
                                 token: authToken,
                                 nonce_response: nonceResponse,
                             }));
+                            wsPhase = 'data';
                             this.connected = true;
-                            this.mountTerminal();
+                            // Wait for Alpine to flip `x-show` (stage === 'live'
+                            // was set above) AND for the browser to lay out the
+                            // now-visible flex container before handing it to
+                            // xterm. Without the nextTick + rAF pair, term.open
+                            // can be called while the container still has
+                            // display:none or zero pixels, leaving xterm in a
+                            // state where later prompt bytes render into an
+                            // invisible canvas. This was reproducible as a
+                            // ~50% blank-terminal on panel reload.
+                            this.$nextTick(() => {
+                                requestAnimationFrame(() => this.mountTerminal());
+                            });
                             return;
                         }
 
-                        // Post-auth: PTY bytes from daemon.
-                        if (typeof evt.data === 'string') {
-                            term.writeBytes(new TextEncoder().encode(evt.data));
+                        // Post-auth: PTY bytes from daemon. May arrive before
+                        // mountTerminal has run; buffer until term is ready.
+                        const bytes = (typeof evt.data === 'string')
+                            ? new TextEncoder().encode(evt.data)
+                            : new Uint8Array(evt.data);
+                        if (term) {
+                            term.writeBytes(bytes);
                         } else {
-                            term.writeBytes(new Uint8Array(evt.data));
+                            pending.push(bytes);
                         }
                     });
 
@@ -258,6 +284,8 @@
                             term.dispose();
                             term = null;
                         }
+                        wsPhase = 'challenge';
+                        pending = [];
                     });
 
                     ws.addEventListener('error', () => {
@@ -266,9 +294,22 @@
                 },
 
                 mountTerminal() {
+                    if (term !== null) {
+                        return;
+                    }
                     const bundle = window.jabaliTerminalBundle;
                     const container = document.getElementById('jt-xterm');
                     if (!container) {
+                        return;
+                    }
+                    // The flex container gains size only after Alpine has
+                    // removed display:none on the live-stage div AND the
+                    // browser has performed layout. If we got here early
+                    // (Vite bundle still initialising, first frame hadn't
+                    // laid out yet), spin on rAF until the container has
+                    // real pixels — xterm can't measure a 0x0 box.
+                    if (container.clientWidth === 0 || container.clientHeight === 0) {
+                        requestAnimationFrame(() => this.mountTerminal());
                         return;
                     }
                     term = bundle.createTerminal(container, {
@@ -284,6 +325,16 @@
                         },
                     });
                     term.fit();
+
+                    // Drain any PTY bytes that arrived while we were waiting
+                    // for the container to finish laying out. This keeps the
+                    // post-auth prompt from being lost on slow first frames.
+                    if (pending.length > 0) {
+                        for (const chunk of pending) {
+                            term.writeBytes(chunk);
+                        }
+                        pending = [];
+                    }
 
                     // 4KB paste cap (SEC-REV-2 paste defence).
                     container.addEventListener('paste', (ev) => {
