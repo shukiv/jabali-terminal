@@ -15,6 +15,13 @@
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
+// xterm.js 5.x does not ship a renderer with the core package — the canvas
+// renderer is an addon and MUST be loaded and activated before term.open(),
+// otherwise _renderService._renderer.value stays undefined and the first
+// internal _refreshAnimationFrame throws asynchronously with
+//   "can't access property 'dimensions', this._renderer.value is undefined"
+// (no try/catch can catch this — it fires from xterm's own RAF).
+import { CanvasAddon } from '@xterm/addon-canvas';
 import 'xterm/css/xterm.css';
 
 function base64urlDecode(s) {
@@ -61,6 +68,12 @@ function createTerminal(container, { onData, onResize }) {
     term.loadAddon(new WebLinksAddon());
 
     term.open(container);
+    // ORDER MATTERS: CanvasAddon must be loaded AFTER open() in xterm 5.x —
+    // its activate() calls terminal._core._renderService.setRenderer(), which
+    // requires the render service (which open() creates). Without this, the
+    // first resize/refresh schedules an async rAF that reads undefined
+    // _renderer.value.dimensions and crashes.
+    term.loadAddon(new CanvasAddon());
 
     // xterm.js 5.x lazily initialises its renderer on the first animation
     // frame after open(). Calling fit.fit() synchronously here — or letting
