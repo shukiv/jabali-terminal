@@ -12,22 +12,21 @@
  * through the panel's npm package graph.
  */
 
-import { Terminal } from 'xterm';
-import { FitAddon } from 'xterm-addon-fit';
-import { WebLinksAddon } from 'xterm-addon-web-links';
-// xterm.js 5.x does not ship a renderer with the core package — the canvas
-// renderer is an addon and MUST be loaded and activated after term.open(),
-// otherwise _renderService._renderer.value stays undefined and the first
-// internal _refreshAnimationFrame throws asynchronously with
-//   "can't access property 'dimensions', this._renderer.value is undefined"
-// (no try/catch can catch this — it fires from xterm's own RAF).
-//
-// We use the legacy `xterm-addon-canvas@0.5.x` (not `@xterm/addon-canvas`)
-// because the scoped 0.7.x package targets @xterm/xterm >= 5.5 and calls
-// _coreBrowserService.mainDocument, which the legacy xterm@5.3 core does
-// not expose — so it crashes on activate() with "mainDocument is undefined".
-import { CanvasAddon } from 'xterm-addon-canvas';
-import 'xterm/css/xterm.css';
+// Scoped @xterm/* packages (current) rather than legacy xterm*. The legacy
+// names were deprecated and, more importantly, their internal APIs drifted
+// out of sync with newer addon versions — mixing the two families causes
+// "_renderer.value is undefined" and "mainDocument is undefined" crashes
+// that no user-code try/catch can swallow (the errors fire from xterm's
+// own async frames). Versions are pinned in package-deps.json so all four
+// live in the same compatibility window.
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+// The canvas renderer is shipped as a separate addon in xterm.js 5.x —
+// without it, _renderService._renderer.value stays undefined and any
+// later refresh crashes in an async rAF we don't own.
+import { CanvasAddon } from '@xterm/addon-canvas';
+import '@xterm/xterm/css/xterm.css';
 
 function base64urlDecode(s) {
     // Translate URL-safe alphabet to standard base64, pad to multiple of 4.
