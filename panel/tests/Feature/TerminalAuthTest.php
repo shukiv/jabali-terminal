@@ -101,7 +101,7 @@ class TerminalAuthTest extends TestCase
             ->assertStatus(403);
     }
 
-    public function test_rejects_missing_two_factor_code(): void
+    public function test_rejects_missing_two_factor_code_when_admin_has_2fa(): void
     {
         $this->actingAs($this->adminUser(), 'admin')
             ->postJson('/jabali-admin/terminal/session', [
@@ -132,14 +132,15 @@ class TerminalAuthTest extends TestCase
             ->assertJson(['error' => 'invalid credentials']);
     }
 
-    public function test_rejects_admin_without_two_factor_enabled(): void
+    public function test_admin_without_two_factor_enabled_logs_in_on_password_alone(): void
     {
         $this->actingAs($this->adminUser(withTwoFactor: false), 'admin')
             ->postJson('/jabali-admin/terminal/session', [
                 'password' => 'correct-horse',
-                'two_factor_code' => self::VALID_2FA_CODE,
+                // No two_factor_code — intentional; this admin has not enrolled.
             ])
-            ->assertStatus(422);
+            ->assertStatus(200)
+            ->assertJsonStructure(['ws_url', 'token', 'expires_at']);
     }
 
     public function test_issues_session_on_success(): void

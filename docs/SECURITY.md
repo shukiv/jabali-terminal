@@ -25,7 +25,7 @@ review of the construction plan at
 
 | # | Attacker                                  | Entry point                                        | Primary defences                                                    |
 |---|-------------------------------------------|----------------------------------------------------|---------------------------------------------------------------------|
-| A | **Stolen admin session cookie**           | Panel session hijack                               | Fresh password re-prompt + 2FA per terminal open; IP-bound token    |
+| A | **Stolen admin session cookie**           | Panel session hijack                               | Fresh password re-prompt per terminal open (+ 2FA when the admin has Fortify 2FA enrolled); IP-bound token |
 | B | **XSS on the panel**                      | Injected JS in the admin browser                   | Token never leaves memory / never in URL (SEC-REV-2); CSP; framebusting |
 | C | **Compromised admin account**             | Attacker knows password + 2FA seed                 | Out-of-scope: admin=root here; the only damper is audit trail       |
 | D | **Insider abuse** (legitimate admin)      | Direct login                                       | HMAC-sealed audit log; Sessions page lists all opens; idle+hard TTL |
@@ -126,12 +126,17 @@ No.
 - CSP `frame-ancestors 'none'` prevents a phishing page from embedding the
   terminal and capturing the modal.
 
-**Q3. Can a compromised admin session cookie open a terminal without 2FA?**
+**Q3. Can a compromised admin session cookie open a terminal without re-auth?**
 
 No.
 - `POST /jabali-admin/terminal/session` requires `auth:admin` (cookie) **plus**
-  `password` **plus** a current `two_factor_code`. Cookie alone is insufficient.
-- Fortify 2FA is required; admins without 2FA set up cannot open a terminal.
+  `password`. Cookie alone is insufficient.
+- If the admin has Fortify 2FA enrolled, a current `two_factor_code`
+  is **also** required and verified server-side; a client that omits
+  the code cannot bypass it by hiding the UI field.
+- Admins who have not enrolled in 2FA get in on the password re-prompt
+  alone. This is a deliberate operator choice: 2FA is conditional on
+  the admin's own account setting, not mandatory addon-wide.
 
 ---
 

@@ -28,7 +28,11 @@
                     {{ __('Re-authenticate to open a root shell') }}
                 </h2>
                 <p class="text-xs text-gray-400">
-                    {{ __('A fresh password and 2FA code are required every time. The shell runs as root.') }}
+                    @if ($requiresTwoFactor)
+                        {{ __('A fresh password and 2FA code are required every time. The shell runs as root.') }}
+                    @else
+                        {{ __('A fresh password is required every time. The shell runs as root.') }}
+                    @endif
                 </p>
                 <input
                     type="password"
@@ -39,6 +43,7 @@
                     class="w-full rounded border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none"
                     required
                 />
+                @if ($requiresTwoFactor)
                 <input
                     type="text"
                     inputmode="numeric"
@@ -51,12 +56,13 @@
                     class="w-full rounded border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none"
                     required
                 />
+                @endif
                 <template x-if="error">
                     <p class="rounded bg-red-900/50 px-3 py-2 text-xs text-red-200" x-text="error"></p>
                 </template>
                 <button
                     type="submit"
-                    :disabled="busy || password.length === 0 || twoFactorCode.length === 0"
+                    :disabled="busy || password.length === 0 || ({{ $requiresTwoFactor ? 'true' : 'false' }} && twoFactorCode.length === 0)"
                     class="w-full rounded bg-cyan-600 px-3 py-2 text-sm font-medium text-white hover:bg-cyan-500 disabled:opacity-50"
                 >
                     <span x-show="!busy">{{ __('Open terminal') }}</span>

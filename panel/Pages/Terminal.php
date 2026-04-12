@@ -55,8 +55,18 @@ class Terminal extends Page
         return $user !== null && method_exists($user, 'isAdmin') && $user->isAdmin();
     }
 
+    /**
+     * True when the current admin has Fortify 2FA configured on their
+     * account. The re-auth modal hides the 2FA input when this is false;
+     * the controller mirrors the check server-side so a hand-crafted
+     * request cannot bypass a configured second factor.
+     */
+    public bool $requiresTwoFactor = false;
+
     public function mount(): void
     {
         abort_unless(static::canAccess(), 403);
+        $user = auth()->user();
+        $this->requiresTwoFactor = $user !== null && ! empty($user->two_factor_secret);
     }
 }

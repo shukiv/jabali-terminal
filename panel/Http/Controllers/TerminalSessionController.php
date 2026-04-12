@@ -40,9 +40,14 @@ class TerminalSessionController
 
     public function __invoke(Request $request): JsonResponse
     {
+        // 2FA is conditional on the admin's own account setting. If the
+        // admin has a two_factor_secret, a code is required. If not,
+        // the field is accepted empty and skipped. Password is always
+        // required — the session cookie alone is not enough to open a
+        // root PTY.
         $validator = Validator::make($request->all(), [
             'password' => ['required', 'string'],
-            'two_factor_code' => ['required', 'string', 'max:10'],
+            'two_factor_code' => ['nullable', 'string', 'max:10'],
         ]);
         if ($validator->fails()) {
             return $this->invalid();
@@ -64,17 +69,23 @@ class TerminalSessionController
             return $this->invalid();
         }
 
-        if (empty($user->two_factor_secret)) {
-            return $this->invalid();
-        }
+        // Only demand a 2FA code when the admin has 2FA configured.
+        // Admins without 2FA get in on password alone.
+        if (! empty($user->two_factor_secret)) {
+            $code = (string) $request->input('two_factor_code', '');
+            if ($code === '') {
+                $this->recordFailure($lockoutKey);
 
-        /** @var TwoFactorAuthenticationProvider $provider */
-        $provider = app(TwoFactorAuthenticationProvider::class);
-        $decryptedSecret = decrypt($user->two_factor_secret);
-        if (! $provider->verify($decryptedSecret, (string) $request->input('two_factor_code'))) {
-            $this->recordFailure($lockoutKey);
+                return $this->invalid();
+            }
+            /** @var TwoFactorAuthenticationProvider $provider */
+            $provider = app(TwoFactorAuthenticationProvider::class);
+            $decryptedSecret = decrypt($user->two_factor_secret);
+            if (! $provider->verify($decryptedSecret, $code)) {
+                $this->recordFailure($lockoutKey);
 
-            return $this->invalid();
+                return $this->invalid();
+            }
         }
 
         // Success path — clear failure counter so a user who typed wrong once
