@@ -22,13 +22,11 @@ RUN_DIR="/run/jabali-terminal"
 SERVICE_NAME="jabali-terminal"
 PANEL_DIR="/var/www/jabali"
 PANEL_APP_DIR="${PANEL_DIR}/app/JabaliTerminal"
-PANEL_VIEW_DIR="${PANEL_DIR}/resources/views/filament/admin/pages"
-PANEL_ROUTES_FILE="${PANEL_DIR}/routes/admin.php"
 NGINX_SNIPPET="/etc/nginx/snippets/jabali-terminal.conf"
 
-# Marker-guarded injection (SEC-REV-7) — replace between BEGIN/END rather than append.
-ROUTE_BEGIN="# === JABALI-TERMINAL ROUTES BEGIN ==="
-ROUTE_END="# === JABALI-TERMINAL ROUTES END ==="
+# Marker-guarded injection (SEC-REV-7). Routes are self-registered by
+# JabaliTerminalPlugin::boot() so no routes/admin.php edit is needed; only
+# nginx gets a marker-guarded include line.
 NGINX_BEGIN="# === JABALI-TERMINAL NGINX BEGIN ==="
 NGINX_END="# === JABALI-TERMINAL NGINX END ==="
 
@@ -157,6 +155,199 @@ safe_rmdir() {
     fi
 }
 
+# Locate the panel vhost that serves /var/www/jabali. Returns path on stdout,
+# empty string if not found. We search sites-enabled first, then sites-available.
+detect_panel_vhost() {
+    local candidates=()
+    if [ -d /etc/nginx/sites-enabled ]; then
+        for f in /etc/nginx/sites-enabled/*; do
+            [ -e "$f" ] || continue
+            candidates+=("$f")
+        done
+    fi
+    if [ -d /etc/nginx/sites-available ]; then
+        for f in /etc/nginx/sites-available/*; do
+            [ -e "$f" ] || continue
+            candidates+=("$f")
+        done
+    fi
+    for f in "${candidates[@]}"; do
+        if grep -q "root\s\+/var/www/jabali" "$f" 2>/dev/null; then
+            echo "$f"
+            return 0
+        fi
+    done
+    echo ""
+}
+
+# Install the nginx snippet (wss://…/terminal-ws -> unix socket) and inject
+# a marker-guarded include line into the panel vhost. Idempotent (SEC-REV-7).
+install_nginx_snippet() {
+    install -d -m 0755 /etc/nginx/snippets
+    install -m 0644 "$INSTALL_DIR/configs/nginx/jabali-terminal-snippet.conf" \
+        "$NGINX_SNIPPET"
+
+    local vhost
+    vhost="$(detect_panel_vhost)"
+    if [ -z "$vhost" ]; then
+        yellow "  Could not auto-detect the panel vhost; add manually:"
+        yellow "    include $NGINX_SNIPPET;"
+        return 0
+    fi
+
+    # Remove any previous block first (idempotent re-install), then append.
+    if grep -qF "$NGINX_BEGIN" "$vhost"; then
+        sed -i "/${NGINX_BEGIN}/,/${NGINX_END}/d" "$vhost"
+    fi
+
+    # Insert before the last closing brace so the include lives inside the
+    # server { } block. If we can't find one, append as a defensive fallback
+    # and warn — the admin will need to move it.
+    local tmp
+    tmp="$(mktemp)"
+    awk -v begin="$NGINX_BEGIN" -v end="$NGINX_END" -v snippet="$NGINX_SNIPPET" '
+        BEGIN { inserted = 0 }
+        {
+            # Buffer the whole file; we only emit on END so we can target the
+            # last "}" before EOF.
+            lines[NR] = $0
+        }
+        END {
+            last_close = 0
+            for (i = NR; i >= 1; i--) {
+                if (lines[i] ~ /^\s*}\s*$/) { last_close = i; break }
+            }
+            for (i = 1; i <= NR; i++) {
+                if (i == last_close && !inserted) {
+                    print "    " begin
+                    print "    include " snippet ";"
+                    print "    " end
+                    inserted = 1
+                }
+                print lines[i]
+            }
+            if (!inserted) {
+                print begin
+                print "include " snippet ";"
+                print end
+            }
+        }
+    ' "$vhost" > "$tmp"
+    cat "$tmp" > "$vhost"
+    rm -f "$tmp"
+
+    if nginx -t >/dev/null 2>&1; then
+        systemctl reload nginx 2>/dev/null || true
+        done_ok "nginx snippet installed + reloaded ($vhost)"
+    else
+        red "  nginx -t failed; reverting panel vhost include"
+        sed -i "/${NGINX_BEGIN}/,/${NGINX_END}/d" "$vhost"
+        return 1
+    fi
+}
+
+uninstall_nginx_snippet() {
+    local vhost
+    vhost="$(detect_panel_vhost)"
+    if [ -n "$vhost" ] && grep -qF "$NGINX_BEGIN" "$vhost"; then
+        sed -i "/${NGINX_BEGIN}/,/${NGINX_END}/d" "$vhost"
+        if nginx -t >/dev/null 2>&1; then
+            systemctl reload nginx 2>/dev/null || true
+        fi
+    fi
+    rm -f "$NGINX_SNIPPET"
+}
+
+# Merge npm deps from panel/resources/package-deps.json into the panel's
+# package.json. Returns 0 if no change was needed, 1 if package.json was
+# modified (caller should run npm ci + npm run build).
+merge_panel_npm_deps() {
+    local panel_pkg="$PANEL_DIR/package.json"
+    local addon_deps="$INSTALL_DIR/panel/resources/package-deps.json"
+    [ -f "$panel_pkg" ] && [ -f "$addon_deps" ] || return 0
+    command -v jq >/dev/null 2>&1 || { yellow "  jq missing; skipping npm dep merge"; return 0; }
+
+    local merged
+    merged="$(jq --slurpfile add "$addon_deps" \
+        '.dependencies = ((.dependencies // {}) * ($add[0].dependencies // {}))' \
+        "$panel_pkg")"
+    if [ "$(echo "$merged" | jq -cS .)" = "$(jq -cS . < "$panel_pkg")" ]; then
+        return 0
+    fi
+    echo "$merged" > "$panel_pkg"
+    return 1
+}
+
+# Copy all panel files into /var/www/jabali. AdminPanelProvider.php is NEVER
+# touched here — the parent panel uses class_exists() autodiscovery (Step 9).
+install_panel_files() {
+    [ -d "$PANEL_DIR/app/Filament" ] || return 0
+
+    install -d -m 0755 \
+        "$PANEL_APP_DIR" \
+        "$PANEL_APP_DIR/Pages" \
+        "$PANEL_APP_DIR/Http" \
+        "$PANEL_APP_DIR/Http/Controllers" \
+        "$PANEL_APP_DIR/views" \
+        "$PANEL_DIR/resources/js" \
+        "$PANEL_DIR/resources/css" \
+        "$PANEL_DIR/tests/Feature"
+
+    install -m 0644 "$INSTALL_DIR/panel/JabaliTerminalPlugin.php"   "$PANEL_APP_DIR/JabaliTerminalPlugin.php"
+    install -m 0644 "$INSTALL_DIR/panel/JabaliTerminalClient.php"   "$PANEL_APP_DIR/JabaliTerminalClient.php"
+    install -m 0644 "$INSTALL_DIR/panel/Pages/Terminal.php"         "$PANEL_APP_DIR/Pages/Terminal.php"
+    install -m 0644 "$INSTALL_DIR/panel/Pages/Sessions.php"         "$PANEL_APP_DIR/Pages/Sessions.php"
+    install -m 0644 "$INSTALL_DIR/panel/Http/PreventFramingMiddleware.php" \
+                    "$PANEL_APP_DIR/Http/PreventFramingMiddleware.php"
+    install -m 0644 "$INSTALL_DIR/panel/Http/Controllers/TerminalSessionController.php" \
+                    "$PANEL_APP_DIR/Http/Controllers/TerminalSessionController.php"
+    install -m 0644 "$INSTALL_DIR/panel/views/terminal.blade.php"   "$PANEL_APP_DIR/views/terminal.blade.php"
+    install -m 0644 "$INSTALL_DIR/panel/views/sessions.blade.php"   "$PANEL_APP_DIR/views/sessions.blade.php"
+    install -m 0644 "$INSTALL_DIR/panel/resources/js/jabali-terminal.js"   "$PANEL_DIR/resources/js/jabali-terminal.js"
+    install -m 0644 "$INSTALL_DIR/panel/resources/css/jabali-terminal.css" "$PANEL_DIR/resources/css/jabali-terminal.css"
+    install -m 0644 "$INSTALL_DIR/panel/tests/Feature/TerminalAuthTest.php" \
+                    "$PANEL_DIR/tests/Feature/TerminalAuthTest.php"
+
+    chown -R www-data:www-data "$PANEL_APP_DIR" 2>/dev/null || true
+    chown www-data:www-data "$PANEL_DIR/resources/js/jabali-terminal.js" \
+                            "$PANEL_DIR/resources/css/jabali-terminal.css" \
+                            "$PANEL_DIR/tests/Feature/TerminalAuthTest.php" 2>/dev/null || true
+
+    done_ok "Panel files installed"
+
+    local npm_changed=0
+    merge_panel_npm_deps || npm_changed=1
+    if [ "$npm_changed" = "1" ] && command -v npm >/dev/null 2>&1; then
+        run_with_spinner "Installing npm deps" \
+            bash -c "cd '$PANEL_DIR' && npm ci --include=dev --silent"
+        run_with_spinner "Building panel assets" \
+            bash -c "cd '$PANEL_DIR' && npm run build --silent"
+    else
+        yellow "  npm deps unchanged or npm missing; asset build skipped."
+        yellow "  If the terminal page fails to load JS, run:"
+        yellow "    cd $PANEL_DIR && npm install && npm run build"
+    fi
+
+    # Clear caches + restart. Pattern matches jabali-security + the note from
+    # the 2026-04-12 rollout.
+    if [ -f "$PANEL_DIR/artisan" ]; then
+        sudo -u www-data bash -c "cd '$PANEL_DIR' && php artisan optimize:clear" >/dev/null 2>&1 || true
+    fi
+    systemctl restart jabali-panel 2>/dev/null || true
+}
+
+uninstall_panel_files() {
+    [ -d "$PANEL_APP_DIR" ] && safe_rmdir "$PANEL_APP_DIR"
+    rm -f "$PANEL_DIR/resources/js/jabali-terminal.js"
+    rm -f "$PANEL_DIR/resources/css/jabali-terminal.css"
+    rm -f "$PANEL_DIR/tests/Feature/TerminalAuthTest.php"
+
+    if [ -f "$PANEL_DIR/artisan" ]; then
+        sudo -u www-data bash -c "cd '$PANEL_DIR' && php artisan optimize:clear" >/dev/null 2>&1 || true
+    fi
+    systemctl restart jabali-panel 2>/dev/null || true
+}
+
 do_uninstall() {
     require_root
     yellow "Uninstalling Jabali Terminal..."
@@ -185,11 +376,13 @@ do_uninstall() {
     safe_rmdir "$LOG_DIR"
     done_ok "Install, config, data, and log dirs removed"
 
-    # Panel plugin is removed by the panel-side uninstall step (Step 8).
-    # Do not sed AdminPanelProvider.php here — that was the jabali-security
-    # regression learned on 2026-04-12.
-    yellow "  Note: panel plugin (if installed) is removed via Server Settings"
-    yellow "        -> Addons -> Terminal -> Uninstall."
+    # Panel-side teardown. AdminPanelProvider.php is never touched because
+    # the parent panel uses class_exists() autodiscovery (jabali-security
+    # regression from 2026-04-12 informs this design).
+    section "Removing Panel Integration"
+    uninstall_nginx_snippet
+    uninstall_panel_files
+    done_ok "Panel integration removed"
 
     green "Jabali Terminal has been removed."
 }
@@ -323,6 +516,15 @@ do_install() {
         red "systemctl start $SERVICE_NAME failed."
         journalctl -u "$SERVICE_NAME" -n 30 --no-pager || true
         exit 1
+    fi
+
+    section "Installing Panel Integration"
+    if [ -d "$PANEL_DIR" ]; then
+        install_panel_files
+        install_nginx_snippet || yellow "  nginx snippet install skipped (see above)"
+    else
+        yellow "  $PANEL_DIR not found — skipping panel integration."
+        yellow "  Install jabali-panel first, then re-run this installer."
     fi
 
     section "Done"
