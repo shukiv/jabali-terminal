@@ -16,12 +16,17 @@ import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
 // xterm.js 5.x does not ship a renderer with the core package — the canvas
-// renderer is an addon and MUST be loaded and activated before term.open(),
+// renderer is an addon and MUST be loaded and activated after term.open(),
 // otherwise _renderService._renderer.value stays undefined and the first
 // internal _refreshAnimationFrame throws asynchronously with
 //   "can't access property 'dimensions', this._renderer.value is undefined"
 // (no try/catch can catch this — it fires from xterm's own RAF).
-import { CanvasAddon } from '@xterm/addon-canvas';
+//
+// We use the legacy `xterm-addon-canvas@0.5.x` (not `@xterm/addon-canvas`)
+// because the scoped 0.7.x package targets @xterm/xterm >= 5.5 and calls
+// _coreBrowserService.mainDocument, which the legacy xterm@5.3 core does
+// not expose — so it crashes on activate() with "mainDocument is undefined".
+import { CanvasAddon } from 'xterm-addon-canvas';
 import 'xterm/css/xterm.css';
 
 function base64urlDecode(s) {
