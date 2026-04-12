@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  tarball:
+    name: Build standalone tarball
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Derive version
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tarball=jabali-terminal-${version}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Build tarball
+        env:
+          TARBALL: ${{ steps.version.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          out_dir="/tmp/jabali-terminal-pkg"
+          mkdir -p "$out_dir"
+          tar --exclude='.git' \
+              --exclude='.github' \
+              --exclude='tests' \
+              --exclude='__pycache__' \
+              --exclude='.pytest_cache' \
+              -czf "$out_dir/$TARBALL" \
+              install.sh CLAUDE.md README.md LICENSE \
+              $( [ -d daemon ] && echo daemon ) \
+              $( [ -d panel ] && echo panel ) \
+              $( [ -d configs ] && echo configs ) \
+              $( [ -d completions ] && echo completions ) \
+              $( [ -d docs ] && echo docs )
+          (cd "$out_dir" && sha256sum "$TARBALL" > "$TARBALL.sha256")
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            /tmp/jabali-terminal-pkg/${{ steps.version.outputs.tarball }}
+            /tmp/jabali-terminal-pkg/${{ steps.version.outputs.tarball }}.sha256
+          generate_release_notes: true
