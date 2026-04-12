@@ -8,13 +8,16 @@
 # rewrites the path at the proxy layer so the daemon-side convention
 # stays stable.
 #
-# SEC-REV-6 note: Caddy's reverse_proxy sets X-Real-IP automatically from
-# the peer connection; the daemon's IP-bind check trusts that header.
-# If this block is reordered so another handler has a chance to mutate
-# the request before reverse_proxy runs, re-verify X-Real-IP is untouched.
+# SEC-REV-6: the daemon's token IP-bind check trusts X-Real-IP. Caddy's
+# reverse_proxy sets X-Forwarded-For but NOT X-Real-IP, so we must set it
+# explicitly from {remote_host} (the direct peer IP, never a client-
+# supplied header). `header_up -X-Real-IP` is implicit: any inbound
+# X-Real-IP the client sent is dropped before we overwrite it.
 
 @jabali_terminal_ws path /terminal-ws
 handle @jabali_terminal_ws {
     rewrite * /terminal/ws
-    reverse_proxy unix//run/jabali-terminal/jabali-terminal.sock
+    reverse_proxy unix//run/jabali-terminal/jabali-terminal.sock {
+        header_up X-Real-IP {remote_host}
+    }
 }

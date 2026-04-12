@@ -218,17 +218,22 @@ All four live in the daemon config or Laravel config; none are hardcoded.
   @jabali_terminal_ws path /terminal-ws
   handle @jabali_terminal_ws {
       rewrite * /terminal/ws
-      reverse_proxy unix//run/jabali-terminal/jabali-terminal.sock
+      reverse_proxy unix//run/jabali-terminal/jabali-terminal.sock {
+          header_up X-Real-IP {remote_host}
+      }
   }
   ```
   The public URL is `/terminal-ws` (dash) to avoid colliding with
   Filament's own route tree; the daemon registers `/terminal/ws` (slash)
   because `/terminal` is a prefix for future endpoints. Caddy rewrites
   at the proxy layer so the daemon-side convention stays stable.
-- Caddy's `reverse_proxy` sets `X-Real-IP` from the peer connection
-  automatically (SEC-REV-6 — the daemon's IP-bind check trusts this
-  header). Do not add an `X-Real-IP` directive elsewhere in the Caddyfile
-  that would run after this block, or re-verify the value is untouched.
+- SEC-REV-6: Caddy's `reverse_proxy` does NOT set `X-Real-IP` by default
+  (it sets `X-Forwarded-For`). The snippet above explicitly writes
+  `X-Real-IP {remote_host}`, which Caddy derives from the direct peer
+  connection and is not a client-supplied header — so an attacker cannot
+  spoof the IP-bind check by sending their own `X-Real-IP`. If the
+  block is reordered so another handler sets `X-Real-IP` after this
+  one, the daemon's IP-bind check could be subverted; re-verify.
 - Host nginx on this topology serves **user domains and webmail only**.
   install.sh MUST NEVER touch `/etc/nginx/` — injecting there would land
   the terminal proxy inside a user vhost. The Caddy-only posture is

@@ -221,3 +221,62 @@ log dirs gone. Items 11, 12, 13 re-verified green.
 **Verdict: do NOT tag Step 11 until Follow-up 4 is resolved.** A
 release today would install cleanly but leave the terminal page
 non-functional until an admin hand-injects a Caddy block.
+
+---
+
+# Re-run — 2026-04-12 (second addendum)
+
+After the Caddy rewrite landed (`653afc0`) — re-ran the gate on
+`jabali-test.local`.
+
+## PASS
+
+Automated install / uninstall / reinstall cycles all green:
+
+- `install.sh` → "Caddy block installed + panel restarted (/etc/jabali/Caddyfile)"
+  on a clean box. Snippet lands inside the `:8443 { … }` server block
+  between BEGIN/END markers.
+- `install.sh --uninstall` → snippet stripped cleanly, `grep -c
+  JABALI-TERMINAL /etc/jabali/Caddyfile` = 0. No residue in
+  `/usr/local/jabali-terminal`, `/etc/jabali-terminal`,
+  `/var/www/jabali/app/JabaliTerminal`.
+- `tests/e2e_socket.py` via unix socket: PASS (same 8 checks as before).
+- `tests/e2e_caddy.py` via `wss://127.0.0.1:8443/terminal-ws`: PASS —
+  full TLS-through-Caddy → rewrite → unix socket → PTY → `whoami=root`.
+- `curl -sk https://127.0.0.1:8443/terminal-ws` returns **400** from the
+  daemon (no upgrade headers = correct).
+
+## One correctness fix surfaced during the re-run
+
+`reverse_proxy` in Caddy does NOT set `X-Real-IP` by default (the
+SECURITY.md §7 draft claimed it did — amended). First Caddy-path run
+failed with `Token verification failed: invalid ip` because the daemon
+saw an empty `X-Real-IP`. Fixed by adding
+`header_up X-Real-IP {remote_host}` inside the `reverse_proxy` block.
+`{remote_host}` is Caddy-evaluated from the peer connection, so it is
+not client-spoofable. SEC-REV-6 note rewritten.
+
+## Clears the blocker
+
+Follow-up 4 is **resolved**. Release gate is green for Step 11.
+
+## Still pending
+
+- Follow-up 5 (path skew) — resolved by the `rewrite * /terminal/ws`
+  hop inside the Caddy block; no further work.
+- Follow-up 6 (fail-fast on missing npm) — still open; not a release
+  blocker.
+- Item 6 (one-session-per-user enforcement) — still open; not a
+  release blocker.
+- Item 9 (live idle-timeout gate test) — still open; not a release
+  blocker.
+
+## Minor environmental note
+
+During rapid install/uninstall cycles the `jabali-panel` systemd unit
+hit `start-limit-hit` once (5 restarts in a short window). Recovered
+with `systemctl reset-failed jabali-panel`. In production installs
+where each addon install/uninstall is separated by >10s this won't
+trigger; for back-to-back E2E runs, consider
+`systemctl reset-failed jabali-panel` in `install_caddy_block` only
+if a prior restart was rejected. Not fixing now — test-only artefact.
