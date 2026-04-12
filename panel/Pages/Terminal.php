@@ -7,6 +7,7 @@ namespace App\JabaliTerminal\Pages;
 use App\JabaliTerminal\Http\PreventFramingMiddleware;
 use BackedEnum;
 use Filament\Pages\Page;
+use UnitEnum;
 
 /**
  * Browser root terminal page.
@@ -27,7 +28,10 @@ class Terminal extends Page
 {
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-command-line';
 
-    protected static ?string $navigationGroup = 'Tools';
+    // Filament 4 requires the property type to match the parent exactly
+    // (invariant for typed properties): UnitEnum|string|null. A plain
+    // ?string declaration would fatal at class load.
+    protected static UnitEnum|string|null $navigationGroup = 'Tools';
 
     protected static ?int $navigationSort = 50;
 

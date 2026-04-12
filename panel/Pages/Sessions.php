@@ -8,6 +8,7 @@ use App\JabaliTerminal\Http\PreventFramingMiddleware;
 use App\JabaliTerminal\JabaliTerminalClient;
 use BackedEnum;
 use Filament\Pages\Page;
+use UnitEnum;
 
 /**
  * Read-only index of past root-shell sessions.
@@ -24,7 +25,7 @@ class Sessions extends Page
 {
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-clock';
 
-    protected static ?string $navigationGroup = 'Tools';
+    protected static UnitEnum|string|null $navigationGroup = 'Tools';
 
     protected static ?int $navigationSort = 51;
 
