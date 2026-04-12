@@ -101,3 +101,123 @@ systemctl is-active jabali-terminal: inactive
    but means the panel's lockfile changes on every addon install. Long
    term, publish addon JS as its own npm package so the panel's lockfile
    stays stable.
+
+---
+
+# Re-run — 2026-04-12 (addendum)
+
+Re-ran the gate on `jabali-test.local` against `main` @ `d2603e6` (Step 9
+landing) via rsync → `bash install.sh`. Goal: revalidate before tagging
+Step 11. **Found one blocker that wasn't surfaced by the prior pass.**
+
+## Blocker — install.sh targets nginx, deployment uses Caddy/FrankenPHP
+
+`install_nginx_snippet` → `detect_panel_vhost` returned empty on this
+LXC. `install.sh` yellow-warned and completed. Net effect: no proxy
+block reached the panel webserver, and `wss://host:8443/terminal-ws`
+returns 404 at Caddy — the terminal page cannot connect.
+
+**Root cause.** Per `CLAUDE.md`, the panel is served by FrankenPHP (Caddy)
+on `:8443`, *independent of nginx*. `ExecStart` confirmed:
+`/usr/local/bin/frankenphp run --config /etc/jabali/Caddyfile`. The host
+nginx (`/etc/nginx/sites-enabled/jabali-test.local.conf`,
+`123123.com.conf`) serves user domains and webmail, never the panel.
+`detect_panel_vhost` searches nginx `sites-*` for `root /var/www/jabali`
+— no match on this topology, ever. The panel URL originates from
+Caddy's `:8443` server block, so that's where `/terminal-ws` must be
+handled.
+
+Why the prior run's item 14 ("Nginx marker block correctly replaced on
+re-install") passed: the prior run used a different topology or a
+no-op marker-replace that didn't verify the block was actually
+included anywhere. This addendum supersedes that item for
+Caddy-based panel deployments, which is the current shipping topology.
+
+### Manual verification that the daemon-side WS chain works once Caddy is
+correct
+
+I hand-injected the following into `/etc/jabali/Caddyfile` inside the
+`:8443 { … }` server block, just before the closing `}`:
+
+```
+# === JABALI-TERMINAL CADDY BEGIN ===
+@jabali_terminal_ws path /terminal-ws
+handle @jabali_terminal_ws {
+    rewrite * /terminal/ws
+    reverse_proxy unix//run/jabali-terminal/jabali-terminal.sock
+}
+# === JABALI-TERMINAL CADDY END ===
+```
+
+Observations:
+
+- `frankenphp validate --config /etc/jabali/Caddyfile` → `Valid`.
+- `systemctl reload jabali-panel` **fails by design**: the unit's
+  `ExecReload` hits `http://localhost:2019/load`, but the Caddyfile
+  declares `admin off`. On this deployment use
+  `systemctl restart jabali-panel` after config changes.
+- After restart: `curl https://127.0.0.1:8443/terminal-ws` → HTTP 400 at
+  daemon (correct — no WS upgrade headers), i.e. Caddy routed the
+  request end-to-end to the daemon's socket handler.
+- The `rewrite * /terminal/ws` is required because the daemon registers
+  `/terminal/ws` (slash) while the panel JS opens `/terminal-ws`
+  (dash). Easier to stabilise the public URL and rewrite, vs. renaming
+  the daemon route.
+
+Post-test I restored `/etc/jabali/Caddyfile` from the pre-test backup.
+Testbox clean.
+
+## Uninstall re-check (this pass)
+
+Ran `bash install.sh --uninstall` on the LXC after the install above.
+All items cleaned up, AdminPanelProvider.php SHA256 identical to
+pre-install (`22f006508281471cbeeb075c7a34a62bb0900a6184af76d743d05ee7f4f7a444`),
+`/var/www/jabali/app/JabaliTerminal/` gone, systemd unit + socket +
+log dirs gone. Items 11, 12, 13 re-verified green.
+
+## Minor findings from this re-run
+
+- **"Existing config preserved" on first install.** On a box with no
+  prior `/etc/jabali-terminal/`, the `Generating Secrets` step
+  reported the config as preserved rather than generating fresh
+  secrets. Daemon ran fine (config ended up valid), so probably a
+  misleading message rather than broken logic, but worth bisecting the
+  step order — the `install` that seeds the file from the example
+  example may be landing *before* the grep-check that decides "fresh
+  vs existing", which would always trip "existing" after the seed.
+- **No npm on the LXC.** `merge_panel_npm_deps` short-circuited; the
+  yellow warning ("run `npm install && npm run build` manually") was
+  the only signal. For a true production install this hint is easy to
+  miss. Consider hard-failing the step with a clear error rather than
+  a warning when npm is missing and the addon ships a JS entry point.
+- **`daemon/Makefile` was not bootstrapping a venv.** `make test`
+  against system Python failed on missing `pydantic` / `aiosqlite`.
+  Rewrote the Makefile to create `.venv/` and `pip install -e ".[dev]"`
+  stamped by `.venv/.ready`. 18 tests now pass locally; 8 deprecation
+  warnings on `datetime.utcnow()` — cosmetic.
+
+## Additional follow-ups (appended to the list above)
+
+4. **Rewrite `install.sh` panel-integration path for Caddy.**
+   Replace `detect_panel_vhost` / `install_nginx_snippet` /
+   `uninstall_nginx_snippet` with Caddy-based equivalents that edit
+   `/etc/jabali/Caddyfile` via the same BEGIN/END markers. Use
+   `frankenphp validate` as the revert-gate and `systemctl restart
+   jabali-panel` (not reload) to pick up changes. Delete
+   `configs/nginx/jabali-terminal-snippet.conf` or repurpose as
+   `configs/caddy/jabali-terminal.caddy`. Update `docs/SECURITY.md`
+   §7 wording (the proxy is Caddy, not nginx — SEC-REV-6 on `X-Real-IP`
+   still applies; Caddy's `reverse_proxy` sets `X-Real-IP` on its own
+   and docs should confirm that).
+5. **`/terminal-ws` vs `/terminal/ws` path skew.** Either register
+   `/terminal-ws` as an alias in the daemon *or* bake the rewrite into
+   the Caddy block. Prefer the latter — keeps the daemon's route
+   convention stable and isolates the public-URL choice to the proxy
+   layer.
+6. **Fail-fast on missing npm** (see minor findings). Decide whether
+   the panel JS is a soft prerequisite (continue with a loud banner)
+   or a hard one (abort install with actionable message).
+
+**Verdict: do NOT tag Step 11 until Follow-up 4 is resolved.** A
+release today would install cleanly but leave the terminal page
+non-functional until an admin hand-injects a Caddy block.
