@@ -32,9 +32,11 @@ jobs:
             echo "daemon/pyproject.toml not present yet (pre-Step 3 scaffold)"
           fi
       - name: Run pytest
+        # cd into daemon so pytest picks up daemon/pyproject.toml (needed
+        # for asyncio_mode = "auto" that drives the async-fixture tests).
         run: |
           if [ -d daemon/tests ]; then
-            pytest daemon/tests -q
+            cd daemon && pytest tests -q
           else
             echo "daemon/tests not present yet (pre-Step 3 scaffold)"
           fi

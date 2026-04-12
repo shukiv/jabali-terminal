@@ -31,6 +31,12 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["daemon"]
 
+[tool.pytest.ini_options]
+# auto-mode lets async fixtures work without decorating each with
+# @pytest_asyncio.fixture. Strict mode would require that on every
+# fixture, which conflicts with the test_nonce_store.py layout.
+asyncio_mode = "auto"
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
