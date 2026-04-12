@@ -4,9 +4,14 @@ declare(strict_types=1);
 
 namespace App\JabaliTerminal;
 
+use App\JabaliTerminal\Http\Controllers\TerminalSessionController;
 use App\JabaliTerminal\Pages\Terminal;
 use Filament\Contracts\Plugin;
 use Filament\Panel;
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\View;
 
 /**
@@ -50,5 +55,29 @@ class JabaliTerminalPlugin implements Plugin
         if (is_dir($viewPath)) {
             View::addNamespace('jabali-terminal', $viewPath);
         }
+
+        // Rate limiter for the session-mint endpoint. Key is composed of
+        // admin id + IP so a single compromised admin session can't burn
+        // through tokens from many vantage points simultaneously, and a
+        // single IP probing a list of admin ids is still capped per-admin.
+        RateLimiter::for('jabali-terminal-session', function (Request $request): Limit {
+            $user = $request->user('admin') ?? $request->user();
+            $adminId = $user?->getAuthIdentifier() ?? 'guest';
+
+            return Limit::perMinute(3)->by($adminId.'|'.$request->ip());
+        });
+
+        // Route registered here (not in the parent panel's routes/web.php)
+        // so removing the addon also removes the endpoint. The route sits
+        // under the same /jabali-admin prefix Filament uses so the session
+        // cookie + CSRF token are scoped correctly.
+        Route::middleware([
+            'web',
+            'auth:admin',
+            'throttle:jabali-terminal-session',
+        ])
+            ->prefix('jabali-admin')
+            ->post('terminal/session', TerminalSessionController::class)
+            ->name('jabali-terminal.session');
     }
 }

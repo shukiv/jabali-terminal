@@ -135,12 +135,44 @@
                     this.error = '';
                     this.busy = true;
                     try {
-                        const result = await @this.call('openSession', this.password, this.twoFactorCode);
-                        // Scrub the password from local state as soon as we have the response.
+                        // Dedicated route (Step 6) — never Livewire — so the
+                        // response JSON never rides through an HTML render.
+                        const csrf = document.querySelector('meta[name="csrf-token"]');
+                        const response = await fetch('{{ route('jabali-terminal.session') }}', {
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json',
+                                'X-CSRF-TOKEN': csrf ? csrf.getAttribute('content') : '',
+                                'X-Requested-With': 'XMLHttpRequest',
+                            },
+                            body: JSON.stringify({
+                                password: this.password,
+                                two_factor_code: this.twoFactorCode,
+                            }),
+                        });
+                        // Scrub secrets from local state regardless of outcome.
                         this.password = '';
                         this.twoFactorCode = '';
-                        if (!result || !result.ok) {
-                            this.error = (result && result.error) ? result.error : 'authentication failed';
+
+                        if (response.status === 429) {
+                            this.error = 'too many attempts, wait a minute';
+                            return;
+                        }
+                        if (!response.ok) {
+                            // Generic message — do not differentiate 422 vs 403
+                            // vs 502 to the user; status just tells us whether
+                            // to let them retry now or show "try later".
+                            this.error = (response.status >= 500)
+                                ? 'daemon unavailable'
+                                : 'invalid credentials';
+                            return;
+                        }
+
+                        const result = await response.json();
+                        if (!result || !result.token || !result.ws_url) {
+                            this.error = 'session mint failed';
                             return;
                         }
                         token = result.token;
