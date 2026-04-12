@@ -61,7 +61,35 @@ function createTerminal(container, { onData, onResize }) {
     term.loadAddon(new WebLinksAddon());
 
     term.open(container);
-    fit.fit();
+
+    // xterm.js 5.x lazily initialises its renderer on the first animation
+    // frame after open(). Calling fit.fit() synchronously here — or letting
+    // the ResizeObserver below fire before the first renderer commit —
+    // triggers the internal _refreshAnimationFrame before _renderer.value
+    // exists, which throws "can't access property 'dimensions' ...".
+    // We defer the first fit until a frame after open(), retry on failure,
+    // and treat every later fit() as best-effort.
+    const safeFit = () => {
+        try {
+            fit.fit();
+            onResize({ cols: term.cols, rows: term.rows });
+            return true;
+        } catch (_e) {
+            return false;
+        }
+    };
+
+    let fitAttempts = 0;
+    const initialFit = () => {
+        if (safeFit()) {
+            return;
+        }
+        fitAttempts += 1;
+        if (fitAttempts < 30) {
+            requestAnimationFrame(initialFit);
+        }
+    };
+    requestAnimationFrame(initialFit);
 
     // Push keystrokes to the server as UTF-8 bytes so non-ASCII input is handled.
     const encoder = new TextEncoder();
@@ -72,12 +100,7 @@ function createTerminal(container, { onData, onResize }) {
     // Re-fit on every window resize, and report the new geometry to the daemon
     // so the PTY's window size is updated (TIOCSWINSZ on the daemon side).
     const reportResize = () => {
-        try {
-            fit.fit();
-        } catch (_e) {
-            return;
-        }
-        onResize({ cols: term.cols, rows: term.rows });
+        safeFit();
     };
     const ro = new ResizeObserver(reportResize);
     ro.observe(container);
@@ -88,8 +111,7 @@ function createTerminal(container, { onData, onResize }) {
             term.write(bytes);
         },
         fit() {
-            fit.fit();
-            onResize({ cols: term.cols, rows: term.rows });
+            safeFit();
         },
         dispose() {
             window.removeEventListener('resize', reportResize);
