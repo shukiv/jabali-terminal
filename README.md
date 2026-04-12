@@ -34,7 +34,8 @@ curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-terminal/main/install
     SQLite nonce store).
   - `GET  /api/v1/sessions` + `/api/v1/sessions/{name}/transcript` —
     read-only audit index for the Sessions page.
-  - `GET  /terminal/ws` — nginx proxies `wss://host/terminal-ws` here.
+  - `GET  /terminal/ws` — Caddy proxies `wss://host:8443/terminal-ws` here
+    via a marker-guarded block injected into `/etc/jabali/Caddyfile`.
     Handshake-challenge auth (SEC-REV-2): challenge → HMAC response →
     token → PTY attach. No token ever in URL.
 - **Panel plugin** (`panel/`) — Filament plugin autodiscovered by

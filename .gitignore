@@ -11,3 +11,4 @@ build/
 
 # Populated config (secrets) must never be committed.
 configs/jabali-terminal.conf
+.claude/

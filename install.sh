@@ -22,13 +22,17 @@ RUN_DIR="/run/jabali-terminal"
 SERVICE_NAME="jabali-terminal"
 PANEL_DIR="/var/www/jabali"
 PANEL_APP_DIR="${PANEL_DIR}/app/JabaliTerminal"
-NGINX_SNIPPET="/etc/nginx/snippets/jabali-terminal.conf"
+
+# The panel is served by FrankenPHP / Caddy on :8443 (see CLAUDE.md).
+# Host nginx on this topology serves user domains + webmail and must NEVER
+# be touched — injecting there by accident would put the terminal proxy
+# inside someone else's vhost. install.sh therefore targets Caddy only.
+PANEL_CADDYFILE="/etc/jabali/Caddyfile"
 
 # Marker-guarded injection (SEC-REV-7). Routes are self-registered by
-# JabaliTerminalPlugin::boot() so no routes/admin.php edit is needed; only
-# nginx gets a marker-guarded include line.
-NGINX_BEGIN="# === JABALI-TERMINAL NGINX BEGIN ==="
-NGINX_END="# === JABALI-TERMINAL NGINX END ==="
+# JabaliTerminalPlugin::boot(), so no routes.php edit is needed either.
+CADDY_BEGIN="# === JABALI-TERMINAL CADDY BEGIN ==="
+CADDY_END="# === JABALI-TERMINAL CADDY END ==="
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -155,107 +159,111 @@ safe_rmdir() {
     fi
 }
 
-# Locate the panel vhost that serves /var/www/jabali. Returns path on stdout,
-# empty string if not found. We search sites-enabled first, then sites-available.
-detect_panel_vhost() {
-    local candidates=()
-    if [ -d /etc/nginx/sites-enabled ]; then
-        for f in /etc/nginx/sites-enabled/*; do
-            [ -e "$f" ] || continue
-            candidates+=("$f")
-        done
-    fi
-    if [ -d /etc/nginx/sites-available ]; then
-        for f in /etc/nginx/sites-available/*; do
-            [ -e "$f" ] || continue
-            candidates+=("$f")
-        done
-    fi
-    for f in "${candidates[@]}"; do
-        if grep -q "root\s\+/var/www/jabali" "$f" 2>/dev/null; then
-            echo "$f"
-            return 0
+# Validate + restart Caddy. The panel's Caddyfile ships with `admin off`,
+# so `systemctl reload` (which uses the admin-API ExecReload) fails by
+# design — a full restart is the supported path. Returns 0 if Caddy is
+# happy, 1 if validation failed.
+caddy_validate_and_reload() {
+    local caddyfile="$1"
+    if command -v frankenphp >/dev/null 2>&1; then
+        if ! frankenphp validate --config "$caddyfile" >/dev/null 2>&1; then
+            return 1
         fi
-    done
-    echo ""
+    fi
+    if systemctl is-active --quiet jabali-panel; then
+        systemctl restart jabali-panel 2>/dev/null || return 1
+    fi
+    return 0
 }
 
-# Install the nginx snippet (wss://…/terminal-ws -> unix socket) and inject
-# a marker-guarded include line into the panel vhost. Idempotent (SEC-REV-7).
-install_nginx_snippet() {
-    install -d -m 0755 /etc/nginx/snippets
-    install -m 0644 "$INSTALL_DIR/configs/nginx/jabali-terminal-snippet.conf" \
-        "$NGINX_SNIPPET"
+# Inject the terminal's Caddy block between BEGIN/END markers inside the
+# panel's Caddyfile. The block is inserted just before the file's last `}`
+# so it lands inside the server block the panel declares. If validation
+# fails, the block is stripped and we exit non-zero.
+install_caddy_block() {
+    local caddyfile="$PANEL_CADDYFILE"
+    local snippet_path="$INSTALL_DIR/configs/caddy/jabali-terminal.caddy"
 
-    local vhost
-    vhost="$(detect_panel_vhost)"
-    if [ -z "$vhost" ]; then
-        yellow "  Could not auto-detect the panel vhost; add manually:"
-        yellow "    include $NGINX_SNIPPET;"
+    if [ ! -f "$caddyfile" ]; then
+        yellow "  Caddyfile not found at $caddyfile; add manually:"
+        sed 's/^/    /' "$snippet_path"
         return 0
     fi
 
-    # Remove any previous block first (idempotent re-install), then append.
-    if grep -qF "$NGINX_BEGIN" "$vhost"; then
-        sed -i "/${NGINX_BEGIN}/,/${NGINX_END}/d" "$vhost"
+    # Remove any previous block first (idempotent re-install).
+    if grep -qF "$CADDY_BEGIN" "$caddyfile"; then
+        sed -i "/${CADDY_BEGIN}/,/${CADDY_END}/d" "$caddyfile"
     fi
 
-    # Insert before the last closing brace so the include lives inside the
-    # server { } block. If we can't find one, append as a defensive fallback
-    # and warn — the admin will need to move it.
+    # Keep a pristine backup for revert-on-failure.
+    local backup
+    backup="$(mktemp)"
+    cp "$caddyfile" "$backup"
+
+    local snippet
+    snippet="$(cat "$snippet_path")"
+
     local tmp
     tmp="$(mktemp)"
-    awk -v begin="$NGINX_BEGIN" -v end="$NGINX_END" -v snippet="$NGINX_SNIPPET" '
-        BEGIN { inserted = 0 }
-        {
-            # Buffer the whole file; we only emit on END so we can target the
-            # last "}" before EOF.
-            lines[NR] = $0
-        }
+    awk -v begin="$CADDY_BEGIN" -v end="$CADDY_END" -v snip="$snippet" '
+        { lines[NR] = $0 }
         END {
             last_close = 0
             for (i = NR; i >= 1; i--) {
                 if (lines[i] ~ /^\s*}\s*$/) { last_close = i; break }
             }
+            inserted = 0
             for (i = 1; i <= NR; i++) {
                 if (i == last_close && !inserted) {
                     print "    " begin
-                    print "    include " snippet ";"
+                    n = split(snip, arr, "\n")
+                    for (j = 1; j <= n; j++) {
+                        # Drop full-comment and empty lines from the snippet
+                        # file — they bloat the Caddyfile for zero benefit.
+                        if (arr[j] ~ /^#/ || arr[j] ~ /^[[:space:]]*$/) continue
+                        print "    " arr[j]
+                    }
                     print "    " end
                     inserted = 1
                 }
                 print lines[i]
             }
             if (!inserted) {
+                # No outer block — fall back to top-level insertion. Caddy
+                # allows snippets outside a site block, but without a
+                # server block the route has no matching host; warn below.
                 print begin
-                print "include " snippet ";"
+                n = split(snip, arr, "\n")
+                for (j = 1; j <= n; j++) {
+                    if (arr[j] ~ /^#/ || arr[j] ~ /^[[:space:]]*$/) continue
+                    print arr[j]
+                }
                 print end
             }
         }
-    ' "$vhost" > "$tmp"
-    cat "$tmp" > "$vhost"
+    ' "$caddyfile" > "$tmp"
+    cat "$tmp" > "$caddyfile"
     rm -f "$tmp"
 
-    if nginx -t >/dev/null 2>&1; then
-        systemctl reload nginx 2>/dev/null || true
-        done_ok "nginx snippet installed + reloaded ($vhost)"
+    if caddy_validate_and_reload "$caddyfile"; then
+        rm -f "$backup"
+        done_ok "Caddy block installed + panel restarted ($caddyfile)"
     else
-        red "  nginx -t failed; reverting panel vhost include"
-        sed -i "/${NGINX_BEGIN}/,/${NGINX_END}/d" "$vhost"
+        red "  Caddyfile validation failed or restart errored; reverting"
+        cp "$backup" "$caddyfile"
+        rm -f "$backup"
+        systemctl restart jabali-panel 2>/dev/null || true
         return 1
     fi
 }
 
-uninstall_nginx_snippet() {
-    local vhost
-    vhost="$(detect_panel_vhost)"
-    if [ -n "$vhost" ] && grep -qF "$NGINX_BEGIN" "$vhost"; then
-        sed -i "/${NGINX_BEGIN}/,/${NGINX_END}/d" "$vhost"
-        if nginx -t >/dev/null 2>&1; then
-            systemctl reload nginx 2>/dev/null || true
-        fi
+uninstall_caddy_block() {
+    local caddyfile="$PANEL_CADDYFILE"
+    [ -f "$caddyfile" ] || return 0
+    if grep -qF "$CADDY_BEGIN" "$caddyfile"; then
+        sed -i "/${CADDY_BEGIN}/,/${CADDY_END}/d" "$caddyfile"
+        caddy_validate_and_reload "$caddyfile" || true
     fi
-    rm -f "$NGINX_SNIPPET"
 }
 
 # Merge npm deps from panel/resources/package-deps.json into the panel's
@@ -383,7 +391,7 @@ do_uninstall() {
     # the parent panel uses class_exists() autodiscovery (jabali-security
     # regression from 2026-04-12 informs this design).
     section "Removing Panel Integration"
-    uninstall_nginx_snippet
+    uninstall_caddy_block
     uninstall_panel_files
     done_ok "Panel integration removed"
 
@@ -532,7 +540,7 @@ do_install() {
     section "Installing Panel Integration"
     if [ -d "$PANEL_DIR" ]; then
         install_panel_files
-        install_nginx_snippet || yellow "  nginx snippet install skipped (see above)"
+        install_caddy_block || yellow "  Caddy block install skipped (see above)"
     else
         yellow "  $PANEL_DIR not found — skipping panel integration."
         yellow "  Install jabali-panel first, then re-run this installer."

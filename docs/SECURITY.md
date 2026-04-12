@@ -29,7 +29,7 @@ review of the construction plan at
 | B | **XSS on the panel**                      | Injected JS in the admin browser                   | Token never leaves memory / never in URL (SEC-REV-2); CSP; framebusting |
 | C | **Compromised admin account**             | Attacker knows password + 2FA seed                 | Out-of-scope: admin=root here; the only damper is audit trail       |
 | D | **Insider abuse** (legitimate admin)      | Direct login                                       | HMAC-sealed audit log; Sessions page lists all opens; idle+hard TTL |
-| E | **Network attacker on the same LAN**      | Sees WS traffic                                    | TLS termination at nginx; daemon listens on unix socket only        |
+| E | **Network attacker on the same LAN**      | Sees WS traffic                                    | TLS termination at Caddy (:8443); daemon listens on unix socket only |
 | F | **Root attacker on the host**             | Already has root through some other path           | Out-of-scope: no defence is meaningful; but note the audit `.sig` file makes post-facto tampering detectable |
 | G | **Replayed token URL** (shared over chat) | Admin shares a URL they think is a bookmark        | Token TTL ≤60s; single-use nonce; IP-bound; handshake-challenge (token not in URL) |
 | H | **CSRF paste attack** (malicious page)    | Tricks admin into pasting a command                | Clipboard-paste hook rejects pastes >4KB; no automatic exec of paste |
@@ -82,7 +82,7 @@ Daemon verifies in strict order (SEC-REV-5):
   │    (1) parse / base64 decode
   │    (2) expires_at > now
   │    (3) nonce not previously consumed  <- persistent SQLite (SEC-REV-1)
-  │    (4) ip matches X-Real-IP          <- set by nginx (SEC-REV-6)
+  │    (4) ip matches X-Real-IP          <- set by Caddy reverse_proxy (SEC-REV-6)
   │    (5) HMAC valid                    <- last so timing leaks less info
   │
   │    Any failure -> close WS with 1008 and emit single `401 invalid token`
@@ -210,13 +210,29 @@ All four live in the daemon config or Laravel config; none are hardcoded.
 
 - **Only** listener: unix socket at `/run/jabali-terminal/jabali-terminal.sock`,
   owner `root:www-data`, mode `0660`. No TCP port, no AF_INET binding.
-- nginx terminates TLS at the panel's existing vhost and proxies the
-  `/terminal-ws` location to the unix socket. The proxy config includes:
+- FrankenPHP / Caddy serves the panel on `:8443` (per `CLAUDE.md` on the
+  parent panel). install.sh injects a marker-guarded block into
+  `/etc/jabali/Caddyfile` that reverse-proxies `/terminal-ws` to the
+  unix socket:
   ```
-  proxy_set_header X-Real-IP $remote_addr;   # overwrites client header (SEC-REV-6)
-  proxy_read_timeout 3600s;                  # matches hard cap (SEC-REV-9)
-  proxy_send_timeout 3600s;
+  @jabali_terminal_ws path /terminal-ws
+  handle @jabali_terminal_ws {
+      rewrite * /terminal/ws
+      reverse_proxy unix//run/jabali-terminal/jabali-terminal.sock
+  }
   ```
+  The public URL is `/terminal-ws` (dash) to avoid colliding with
+  Filament's own route tree; the daemon registers `/terminal/ws` (slash)
+  because `/terminal` is a prefix for future endpoints. Caddy rewrites
+  at the proxy layer so the daemon-side convention stays stable.
+- Caddy's `reverse_proxy` sets `X-Real-IP` from the peer connection
+  automatically (SEC-REV-6 — the daemon's IP-bind check trusts this
+  header). Do not add an `X-Real-IP` directive elsewhere in the Caddyfile
+  that would run after this block, or re-verify the value is untouched.
+- Host nginx on this topology serves **user domains and webmail only**.
+  install.sh MUST NEVER touch `/etc/nginx/` — injecting there would land
+  the terminal proxy inside a user vhost. The Caddy-only posture is
+  enforced in `install_caddy_block()` (there is no nginx code path).
 - CSP on the terminal page: `default-src 'self'; frame-ancestors 'none';
   connect-src 'self' wss: ws:; script-src 'self';` — bundles xterm.js locally
   through Vite; no CDN.
