@@ -109,11 +109,19 @@ class TerminalSessionController
             return response()->json(['error' => 'session mint failed'], 502);
         }
 
+        // Construct the ws_url from the panel's own request URL rather than
+        // trusting whatever the daemon returns — the daemon is reached via
+        // the unix socket, so `request.host` there is "localhost" and the
+        // browser would try to dial the wrong origin. Panel-side is the
+        // only side that actually knows the public URL the browser used.
+        $scheme = $request->isSecure() ? 'wss' : 'ws';
+        $wsUrl = $scheme.'://'.$request->getHttpHost().'/terminal-ws';
+
         // Token is returned in the JSON body only — never rendered into HTML,
         // never logged, never persisted server-side. The browser must keep it
         // in a closure variable and drop it after the WS auth frame is sent.
         return response()->json([
-            'ws_url' => (string) $session['ws_url'],
+            'ws_url' => $wsUrl,
             'token' => (string) $session['token'],
             'expires_at' => (int) $session['expires_at'],
         ]);
