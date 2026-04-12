@@ -56,7 +56,12 @@ class TerminalServer:
         """
         POST /api/v1/session — Mint session token.
 
-        Request: {admin_id, ip, issued_at, nonce} signed with HMAC
+        Request: {admin_id, ip, issued_at, nonce, hmac}
+        The panel signs `admin_id|ip|nonce|issued_at` with the shared HMAC
+        secret. The daemon verifies the signature in constant time before
+        minting; this is defense-in-depth on top of the 0660 root:www-data
+        socket permissions so a write-side regression cannot forge tokens.
+
         Response: {ws_url, token, expires_at}
 
         The token is never returned in a URL; it's held in client memory
@@ -75,6 +80,31 @@ class TerminalServer:
 
         if not all([admin_id, ip, nonce_hex, issued_at, hmac_sig]):
             return web.json_response({"error": "missing fields"}, status=400)
+
+        # Verify the request HMAC before doing any work (constant-time compare).
+        import hashlib
+        import hmac as hmac_mod
+
+        try:
+            secret_bytes = bytes.fromhex(self.config.hmac_secret)
+            signing_string = f"{admin_id}|{ip}|{nonce_hex}|{issued_at}".encode()
+            expected = hmac_mod.new(secret_bytes, signing_string, hashlib.sha256).hexdigest()
+        except Exception:
+            return web.json_response({"error": "invalid request"}, status=400)
+
+        if not hmac_mod.compare_digest(str(hmac_sig), expected):
+            logger.warning("Request HMAC mismatch for admin_id=%s ip=%s", admin_id, ip)
+            return web.json_response({"error": "invalid request"}, status=401)
+
+        # Reject stale requests (>30s clock skew window).
+        try:
+            issued_at_int = int(issued_at)
+        except (TypeError, ValueError):
+            return web.json_response({"error": "invalid request"}, status=400)
+        now = int(__import__("time").time())
+        if abs(now - issued_at_int) > 30:
+            logger.warning("Session request outside clock window: issued_at=%s now=%s", issued_at_int, now)
+            return web.json_response({"error": "invalid request"}, status=401)
 
         try:
             nonce = bytes.fromhex(nonce_hex)

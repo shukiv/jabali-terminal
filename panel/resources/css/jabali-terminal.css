@@ -1,0 +1,19 @@
+/* Jabali Terminal — minimal styling layered on top of xterm.js's own CSS. */
+
+#jt-xterm {
+    padding: 8px;
+}
+
+#jt-xterm .xterm,
+#jt-xterm .xterm-viewport {
+    background-color: #000 !important;
+}
+
+/* Keep the terminal usable on narrow viewports; xterm.js handles the rest. */
+#jt-root .xterm-viewport::-webkit-scrollbar {
+    width: 8px;
+}
+#jt-root .xterm-viewport::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+}
