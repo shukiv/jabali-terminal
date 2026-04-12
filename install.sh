@@ -301,8 +301,9 @@ install_panel_files() {
         "$PANEL_DIR/resources/css" \
         "$PANEL_DIR/tests/Feature"
 
-    install -m 0644 "$INSTALL_DIR/panel/JabaliTerminalPlugin.php"   "$PANEL_APP_DIR/JabaliTerminalPlugin.php"
-    install -m 0644 "$INSTALL_DIR/panel/JabaliTerminalClient.php"   "$PANEL_APP_DIR/JabaliTerminalClient.php"
+    install -m 0644 "$INSTALL_DIR/panel/JabaliTerminalPlugin.php"          "$PANEL_APP_DIR/JabaliTerminalPlugin.php"
+    install -m 0644 "$INSTALL_DIR/panel/JabaliTerminalServiceProvider.php" "$PANEL_APP_DIR/JabaliTerminalServiceProvider.php"
+    install -m 0644 "$INSTALL_DIR/panel/JabaliTerminalClient.php"          "$PANEL_APP_DIR/JabaliTerminalClient.php"
     install -m 0644 "$INSTALL_DIR/panel/Pages/Terminal.php"         "$PANEL_APP_DIR/Pages/Terminal.php"
     install -m 0644 "$INSTALL_DIR/panel/Pages/Sessions.php"         "$PANEL_APP_DIR/Pages/Sessions.php"
     install -m 0644 "$INSTALL_DIR/panel/Http/PreventFramingMiddleware.php" \
