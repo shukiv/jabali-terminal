@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\JabaliTerminal;
 
 use App\JabaliTerminal\Http\Controllers\TerminalSessionController;
+use App\JabaliTerminal\Pages\Sessions;
 use App\JabaliTerminal\Pages\Terminal;
 use Filament\Contracts\Plugin;
 use Filament\Panel;
@@ -46,6 +47,7 @@ class JabaliTerminalPlugin implements Plugin
     {
         $panel->pages([
             Terminal::class,
+            Sessions::class,
         ]);
     }
 

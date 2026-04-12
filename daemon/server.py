@@ -52,6 +52,96 @@ class TerminalServer:
         """GET /health — health check."""
         return web.json_response({"status": "ok"})
 
+    async def sessions_list_handler(self, request: web.Request) -> web.Response:
+        """
+        GET /api/v1/sessions — list the 100 most recent audit transcripts.
+
+        The panel reaches this via the unix socket (root:www-data 0660) so
+        caller identity is already enforced by the filesystem; the daemon
+        returns metadata only (no transcript bodies) to keep the index page
+        responsive.
+        """
+        log_dir = self.config.audit_log_dir
+        try:
+            entries = []
+            if os.path.isdir(log_dir):
+                for name in os.listdir(log_dir):
+                    if not name.endswith(".log"):
+                        continue
+                    full = os.path.join(log_dir, name)
+                    try:
+                        st = os.stat(full)
+                    except OSError:
+                        continue
+                    # Filename format: <ISO-date>_<admin>_<session-id>.log
+                    parts = name[:-4].split("_", 2)
+                    iso_date = parts[0] if len(parts) > 0 else ""
+                    admin = parts[1] if len(parts) > 1 else ""
+                    session_id = parts[2] if len(parts) > 2 else ""
+                    sig_exists = os.path.exists(full + ".sig")
+                    entries.append({
+                        "name": name,
+                        "date": iso_date,
+                        "admin": admin,
+                        "session_id": session_id,
+                        "size_bytes": st.st_size,
+                        "modified_at": int(st.st_mtime),
+                        "sealed": sig_exists,
+                    })
+            entries.sort(key=lambda e: e["modified_at"], reverse=True)
+            return web.json_response({"sessions": entries[:100]})
+        except Exception as e:
+            logger.error("sessions list failed: %s", e)
+            return web.json_response({"error": "server error"}, status=500)
+
+    async def sessions_transcript_handler(self, request: web.Request) -> web.Response:
+        """
+        GET /api/v1/sessions/{name}/transcript — return a single transcript.
+
+        Accepts only sanitised filenames (no slashes, no `..`, must match the
+        known pattern). The response is capped at 1 MiB; larger transcripts
+        return a 413 with a message asking the admin to fetch via CLI.
+        """
+        name = request.match_info.get("name", "")
+        # Strict whitelist: <date>_<admin>_<session>.log with limited charset.
+        # Prevents path traversal and forces callers through the same filename
+        # schema the daemon produces (no arbitrary reads outside audit_log_dir).
+        import re
+
+        if not re.fullmatch(r"[0-9A-Za-z._\-]{1,128}\.log", name):
+            return web.json_response({"error": "invalid name"}, status=400)
+        if "/" in name or ".." in name:
+            return web.json_response({"error": "invalid name"}, status=400)
+
+        log_dir = self.config.audit_log_dir
+        full = os.path.join(log_dir, name)
+        # realpath both sides and ensure the target is actually inside log_dir.
+        try:
+            resolved_dir = os.path.realpath(log_dir)
+            resolved_target = os.path.realpath(full)
+        except OSError:
+            return web.json_response({"error": "not found"}, status=404)
+        if not resolved_target.startswith(resolved_dir + os.sep) \
+                and resolved_target != resolved_dir:
+            return web.json_response({"error": "not found"}, status=404)
+        if not os.path.isfile(resolved_target):
+            return web.json_response({"error": "not found"}, status=404)
+
+        max_bytes = 1024 * 1024
+        try:
+            size = os.path.getsize(resolved_target)
+            if size > max_bytes:
+                return web.json_response(
+                    {"error": "transcript too large; use CLI"},
+                    status=413,
+                )
+            with open(resolved_target, "rb") as fh:
+                body = fh.read()
+        except OSError:
+            return web.json_response({"error": "not found"}, status=404)
+
+        return web.Response(body=body, content_type="text/plain", charset="utf-8")
+
     async def session_handler(self, request: web.Request) -> web.Response:
         """
         POST /api/v1/session — Mint session token.
@@ -233,7 +323,9 @@ class TerminalServer:
                 "audit": audit,
             }
 
-            # PTY proxy
+            # PTY proxy. ws_recv returns the raw message payload so the bridge
+            # can distinguish binary keystrokes (bytes) from JSON control frames
+            # (str). Returning None means the peer closed the socket.
             async def ws_send(data):
                 try:
                     if isinstance(data, bytes):
@@ -244,7 +336,13 @@ class TerminalServer:
                     pass
 
             async def ws_recv():
-                return await ws.receive_json()
+                msg = await ws.receive()
+                if msg.type == web.WSMsgType.BINARY:
+                    return msg.data
+                if msg.type == web.WSMsgType.TEXT:
+                    return msg.data
+                # CLOSE / CLOSING / CLOSED / ERROR — treat as end-of-stream.
+                return None
 
             try:
                 exit_code = await run_pty_session(
@@ -292,10 +390,16 @@ async def main() -> None:
     server = TerminalServer(config)
     await server.init()
 
-    # Create aiohttp app for unix socket HTTP API
+    # Create aiohttp app for unix socket HTTP API.
+    # Every route here is reachable ONLY via the unix socket (0660 root:www-data)
+    # and, for /terminal/ws, via the nginx proxy that maps wss://host/terminal-ws
+    # to the socket's /terminal/ws path. Never bind TCP.
     app = web.Application()
     app.router.add_get("/health", server.health_handler)
     app.router.add_post("/api/v1/session", server.session_handler)
+    app.router.add_get("/api/v1/sessions", server.sessions_list_handler)
+    app.router.add_get("/api/v1/sessions/{name}/transcript", server.sessions_transcript_handler)
+    app.router.add_get("/terminal/ws", server.ws_handler)
 
     # Create runner
     runner = web.AppRunner(app)

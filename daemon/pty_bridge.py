@@ -44,10 +44,15 @@ async def run_pty_session(
     Returns: PTY exit code
 
     Proxying logic:
-    - Client sends JSON: {type: "stdin", data: "<base64>"} or {type: "resize", rows: N, cols: N}
-    - Daemon sends PTY output as binary frames (text frames for control messages)
-    - Idle timeout: both stdin AND stdout silent
-    - Hard timeout: force close regardless of activity
+    - Client sends BINARY frames for PTY stdin (raw UTF-8 bytes).
+    - Client sends TEXT (JSON) frames for control: {type: "resize", cols, rows}.
+    - Daemon sends PTY output as BINARY frames; control messages as TEXT.
+    - ws_recv() returns:
+        * bytes   -> stdin
+        * str     -> JSON control frame
+        * None    -> peer closed; end the session
+    - Idle timeout: both stdin AND stdout silent (SEC-REV-3).
+    - Hard timeout: force close regardless of activity (SEC-REV-9).
     """
     pid, master_fd = pty.openpty()
 
@@ -103,33 +108,35 @@ async def run_pty_session(
             # Receive from WebSocket (non-blocking, timeout 0.1s)
             try:
                 msg = await asyncio.wait_for(ws_recv(), timeout=0.1)
-                if isinstance(msg, str):
-                    msg_json = json.loads(msg)
-                    msg_type = msg_json.get("type")
-
-                    if msg_type == "stdin":
-                        import base64
-
-                        data = base64.b64decode(msg_json.get("data", ""))
-                        # Limit paste to 4KB (SEC-REV-8)
-                        if len(data) > 4096:
-                            await ws_send(
-                                json.dumps(
-                                    {
-                                        "type": "error",
-                                        "message": "Paste exceeds 4KB limit",
-                                    }
-                                )
-                            )
-                            continue
-                        os.write(master_fd, data)
-                        audit_session.write_stdin(data)
-                        last_stdin = time.time()
-                        last_activity = time.time()
-
-                    elif msg_type == "resize":
-                        cols = msg_json.get("cols", 80)
-                        rows = msg_json.get("rows", 24)
+                if msg is None:
+                    # Peer closed — signal the shell and exit the loop.
+                    os.kill(pid, signal.SIGHUP)
+                    break
+                if isinstance(msg, (bytes, bytearray)):
+                    data = bytes(msg)
+                    # Defence-in-depth cap: the UI already caps pastes at 4KB
+                    # (SEC-REV-8 client-side), enforce server-side too so a
+                    # patched browser cannot flood the PTY.
+                    if len(data) > 4096:
+                        await ws_send(
+                            json.dumps({
+                                "type": "error",
+                                "message": "stdin frame exceeds 4KB limit",
+                            })
+                        )
+                        continue
+                    os.write(master_fd, data)
+                    audit_session.write_stdin(data)
+                    last_stdin = time.time()
+                    last_activity = time.time()
+                elif isinstance(msg, str):
+                    try:
+                        msg_json = json.loads(msg)
+                    except json.JSONDecodeError:
+                        continue
+                    if msg_json.get("type") == "resize":
+                        cols = int(msg_json.get("cols", 80))
+                        rows = int(msg_json.get("rows", 24))
                         _set_pty_size(master_fd, rows, cols)
 
             except asyncio.TimeoutError:

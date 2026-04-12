@@ -40,6 +40,63 @@ class JabaliTerminalClient
     }
 
     /**
+     * List the 100 most recent audit transcripts.
+     *
+     * @return array<int, array{name:string,date:string,admin:string,session_id:string,size_bytes:int,modified_at:int,sealed:bool}>
+     */
+    public function listSessions(): array
+    {
+        if (! $this->socketPath || ! file_exists($this->socketPath)) {
+            return [];
+        }
+
+        try {
+            $response = $this->request()->timeout(5)
+                ->get($this->baseUrl.'/api/v1/sessions');
+            if (! $response->successful()) {
+                return [];
+            }
+            $data = $response->json();
+
+            return is_array($data['sessions'] ?? null) ? $data['sessions'] : [];
+        } catch (\Throwable $e) {
+            Log::error('JabaliTerminal: listSessions failed: '.$e->getMessage());
+
+            return [];
+        }
+    }
+
+    /**
+     * Fetch a single transcript as UTF-8 text. Returns null if not found.
+     * The caller is responsible for escaping before rendering into HTML.
+     */
+    public function getTranscript(string $name): ?string
+    {
+        if (! $this->socketPath || ! file_exists($this->socketPath)) {
+            return null;
+        }
+        // Guard rail: the daemon applies its own regex, but do not let
+        // arbitrary strings through the URL-encoding path either.
+        if (! preg_match('/^[0-9A-Za-z._-]{1,128}\.log$/', $name)) {
+            return null;
+        }
+
+        try {
+            $response = $this->request()->timeout(10)
+                ->get($this->baseUrl.'/api/v1/sessions/'.rawurlencode($name).'/transcript');
+            if (! $response->successful()) {
+                return null;
+            }
+
+            return (string) $response->body();
+        } catch (\Throwable $e) {
+            Log::error('JabaliTerminal: getTranscript failed: '.$e->getMessage());
+
+            return null;
+        }
+    }
+
+    /**
      * True if the daemon is reachable and healthy.
      */
     public function isAvailable(): bool
