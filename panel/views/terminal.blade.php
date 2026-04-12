@@ -12,92 +12,121 @@
         x-data="jabaliTerminal()"
         x-init="init()"
         wire:ignore
-        class="flex h-[70vh] flex-col gap-3 rounded-xl bg-gray-950 p-3 text-gray-200 shadow-lg"
+        class="flex flex-col gap-4"
     >
-        {{-- Re-auth modal --}}
-        <div
-            x-show="stage === 'auth'"
-            x-cloak
-            class="flex flex-1 items-center justify-center"
-        >
-            <form
-                @submit.prevent="submitAuth()"
-                class="w-full max-w-md space-y-3 rounded-lg border border-gray-800 bg-gray-900 p-5"
+        {{-- Re-auth section --}}
+        <div x-show="stage === 'auth'" x-cloak>
+            <x-filament::section
+                :heading="__('Re-authenticate to open a root shell')"
+                :description="$requiresTwoFactor
+                    ? __('A fresh password and 2FA code are required every time. The shell runs as root.')
+                    : __('A fresh password is required every time. The shell runs as root.')"
+                icon="heroicon-o-lock-closed"
             >
-                <h2 class="text-base font-semibold text-white">
-                    {{ __('Re-authenticate to open a root shell') }}
-                </h2>
-                <p class="text-xs text-gray-400">
+                <form @submit.prevent="submitAuth()" class="flex flex-col gap-4">
+                    <x-filament::input.wrapper>
+                        <x-filament::input
+                            type="password"
+                            x-model="password"
+                            :placeholder="__('Password')"
+                            autocomplete="current-password"
+                            required
+                            x-bind:disabled="busy"
+                        />
+                    </x-filament::input.wrapper>
+
                     @if ($requiresTwoFactor)
-                        {{ __('A fresh password and 2FA code are required every time. The shell runs as root.') }}
-                    @else
-                        {{ __('A fresh password is required every time. The shell runs as root.') }}
+                        <x-filament::input.wrapper>
+                            <x-filament::input
+                                type="text"
+                                x-model="twoFactorCode"
+                                :placeholder="__('2FA code')"
+                                inputmode="numeric"
+                                pattern="[0-9]*"
+                                maxlength="10"
+                                autocomplete="one-time-code"
+                                required
+                                x-bind:disabled="busy"
+                            />
+                        </x-filament::input.wrapper>
                     @endif
-                </p>
-                <input
-                    type="password"
-                    x-model="password"
-                    :disabled="busy"
-                    autocomplete="current-password"
-                    placeholder="{{ __('Password') }}"
-                    class="w-full rounded border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none"
-                    required
-                />
-                @if ($requiresTwoFactor)
-                <input
-                    type="text"
-                    inputmode="numeric"
-                    pattern="[0-9]*"
-                    maxlength="10"
-                    x-model="twoFactorCode"
-                    :disabled="busy"
-                    autocomplete="one-time-code"
-                    placeholder="{{ __('2FA code') }}"
-                    class="w-full rounded border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none"
-                    required
-                />
-                @endif
-                <template x-if="error">
-                    <p class="rounded bg-red-900/50 px-3 py-2 text-xs text-red-200" x-text="error"></p>
-                </template>
-                <button
-                    type="submit"
-                    :disabled="busy || password.length === 0 || ({{ $requiresTwoFactor ? 'true' : 'false' }} && twoFactorCode.length === 0)"
-                    class="w-full rounded bg-cyan-600 px-3 py-2 text-sm font-medium text-white hover:bg-cyan-500 disabled:opacity-50"
-                >
-                    <span x-show="!busy">{{ __('Open terminal') }}</span>
-                    <span x-show="busy">{{ __('Opening…') }}</span>
-                </button>
-            </form>
+
+                    <template x-if="error">
+                        <div>
+                            <x-filament::badge color="danger" size="lg" class="w-full">
+                                <span x-text="error"></span>
+                            </x-filament::badge>
+                        </div>
+                    </template>
+
+                    <x-filament::button
+                        type="submit"
+                        color="primary"
+                        size="lg"
+                        icon="heroicon-o-command-line"
+                        x-bind:disabled="busy || password.length === 0 || ({{ $requiresTwoFactor ? 'true' : 'false' }} && twoFactorCode.length === 0)"
+                    >
+                        <span x-show="!busy">{{ __('Open terminal') }}</span>
+                        <span x-show="busy" x-cloak>{{ __('Opening…') }}</span>
+                    </x-filament::button>
+                </form>
+            </x-filament::section>
         </div>
 
         {{-- Live terminal --}}
-        <div x-show="stage === 'live'" x-cloak class="flex flex-1 flex-col gap-2">
-            <div class="flex items-center justify-between rounded bg-gray-900 px-3 py-2 text-xs">
-                <span>
-                    <span class="inline-block h-2 w-2 rounded-full" :class="connected ? 'bg-green-500' : 'bg-yellow-500'"></span>
-                    <span x-text="connected ? '{{ __('Connected') }}' : '{{ __('Connecting…') }}'"></span>
-                </span>
-                <button
-                    type="button"
-                    @click="endSession()"
-                    class="rounded bg-red-600 px-3 py-1 font-medium text-white hover:bg-red-500"
-                >
-                    {{ __('End session') }}
-                </button>
-            </div>
-            <div id="jt-xterm" class="flex-1 overflow-hidden rounded bg-black"></div>
+        <div x-show="stage === 'live'" x-cloak class="flex flex-col gap-3">
+            <x-filament::section>
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <template x-if="connected">
+                            <x-filament::badge color="success" icon="heroicon-o-signal">
+                                {{ __('Connected') }}
+                            </x-filament::badge>
+                        </template>
+                        <template x-if="!connected">
+                            <x-filament::badge color="warning" icon="heroicon-o-signal-slash">
+                                {{ __('Connecting…') }}
+                            </x-filament::badge>
+                        </template>
+                    </div>
+                    <x-filament::button
+                        type="button"
+                        color="danger"
+                        size="sm"
+                        icon="heroicon-o-x-mark"
+                        x-on:click="endSession()"
+                    >
+                        {{ __('End session') }}
+                    </x-filament::button>
+                </div>
+            </x-filament::section>
+
+            <div id="jt-xterm" class="fi-section rounded-xl bg-black p-2 min-h-[60vh]"></div>
+
             <template x-if="warning">
-                <p class="rounded bg-yellow-900/60 px-3 py-2 text-xs text-yellow-200" x-text="warning"></p>
+                <div>
+                    <x-filament::badge color="warning" icon="heroicon-o-exclamation-triangle" size="lg">
+                        <span x-text="warning"></span>
+                    </x-filament::badge>
+                </div>
             </template>
         </div>
 
         {{-- Closed state --}}
-        <div x-show="stage === 'closed'" x-cloak class="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-gray-400">
-            <p x-text="closeReason || '{{ __('Session closed') }}'"></p>
-            <button type="button" @click="resetToAuth()" class="rounded bg-cyan-600 px-3 py-1 text-sm text-white hover:bg-cyan-500">
-                {{ __('Open another session') }}
-            </button>
+        <div x-show="stage === 'closed'" x-cloak>
+            <x-filament::section icon="heroicon-o-power">
+                <div class="flex flex-col items-center justify-center gap-4 py-6">
+                    <p class="text-sm text-gray-500 dark:text-gray-400" x-text="closeReason || '{{ __('Session closed') }}'"></p>
+                    <x-filament::button
+                        type="button"
+                        color="primary"
+                        icon="heroicon-o-arrow-path"
+                        x-on:click="resetToAuth()"
+                    >
+                        {{ __('Open another session') }}
+                    </x-filament::button>
+                </div>
+            </x-filament::section>
         </div>
     </div>
 

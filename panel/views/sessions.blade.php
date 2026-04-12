@@ -1,81 +1,99 @@
 <x-filament-panels::page>
-    <div class="space-y-4">
-        <div class="flex items-center justify-between">
-            <div class="text-sm text-gray-500">
-                {{ __('Last 100 sessions. Transcripts are sealed with HMAC on close.') }}
+    <div class="flex flex-col gap-4">
+        <x-filament::section>
+            <div class="flex items-center justify-between">
+                <p class="text-sm text-gray-500 dark:text-gray-400">
+                    {{ __('Last 100 sessions. Transcripts are sealed with HMAC on close.') }}
+                </p>
+                <x-filament::button
+                    color="gray"
+                    size="sm"
+                    icon="heroicon-o-arrow-path"
+                    wire:click="refresh"
+                >
+                    {{ __('Refresh') }}
+                </x-filament::button>
             </div>
-            <button
-                type="button"
-                wire:click="refresh"
-                class="rounded bg-cyan-600 px-3 py-1 text-sm font-medium text-white hover:bg-cyan-500"
-            >
-                {{ __('Refresh') }}
-            </button>
-        </div>
+        </x-filament::section>
 
-        <div class="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
-            <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-800 text-sm">
-                <thead class="bg-gray-50 dark:bg-gray-800">
-                    <tr>
-                        <th class="px-4 py-2 text-left font-medium">{{ __('Date') }}</th>
-                        <th class="px-4 py-2 text-left font-medium">{{ __('Admin') }}</th>
-                        <th class="px-4 py-2 text-left font-medium">{{ __('Session') }}</th>
-                        <th class="px-4 py-2 text-right font-medium">{{ __('Size') }}</th>
-                        <th class="px-4 py-2 text-left font-medium">{{ __('Sealed') }}</th>
-                        <th class="px-4 py-2 text-right font-medium"></th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
-                    @forelse ($sessions as $session)
-                        <tr>
-                            <td class="px-4 py-2 font-mono text-xs">{{ $session['date'] ?? '' }}</td>
-                            <td class="px-4 py-2">{{ $session['admin'] ?? '' }}</td>
-                            <td class="px-4 py-2 font-mono text-xs">{{ $session['session_id'] ?? '' }}</td>
-                            <td class="px-4 py-2 text-right">{{ number_format((int) ($session['size_bytes'] ?? 0)) }} B</td>
-                            <td class="px-4 py-2">
-                                @if ($session['sealed'] ?? false)
-                                    <span class="rounded bg-green-100 px-2 py-0.5 text-xs text-green-800 dark:bg-green-900 dark:text-green-200">{{ __('sealed') }}</span>
-                                @else
-                                    <span class="rounded bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">{{ __('unsealed') }}</span>
-                                @endif
-                            </td>
-                            <td class="px-4 py-2 text-right">
-                                <button
-                                    type="button"
-                                    wire:click="viewTranscript(@js($session['name'] ?? ''))"
-                                    class="text-cyan-600 hover:underline dark:text-cyan-400"
-                                >
-                                    {{ __('View') }}
-                                </button>
-                            </td>
-                        </tr>
-                    @empty
-                        <tr>
-                            <td colspan="6" class="px-4 py-6 text-center text-gray-500">
-                                {{ __('No sessions recorded yet.') }}
-                            </td>
-                        </tr>
-                    @endforelse
-                </tbody>
-            </table>
-        </div>
+        <x-filament::section>
+            @if (empty($sessions))
+                <div class="flex flex-col items-center justify-center gap-2 py-10 text-center">
+                    <x-filament::icon
+                        icon="heroicon-o-clock"
+                        class="h-8 w-8 text-gray-400"
+                    />
+                    <p class="text-sm text-gray-500 dark:text-gray-400">
+                        {{ __('No sessions recorded yet.') }}
+                    </p>
+                </div>
+            @else
+                <div class="overflow-x-auto">
+                    <table class="w-full text-start text-sm">
+                        <thead>
+                            <tr class="border-b border-gray-200 dark:border-white/10">
+                                <th class="px-3 py-2 text-start font-medium text-gray-500 dark:text-gray-300">{{ __('Date') }}</th>
+                                <th class="px-3 py-2 text-start font-medium text-gray-500 dark:text-gray-300">{{ __('Admin') }}</th>
+                                <th class="px-3 py-2 text-start font-medium text-gray-500 dark:text-gray-300">{{ __('Session') }}</th>
+                                <th class="px-3 py-2 text-end font-medium text-gray-500 dark:text-gray-300">{{ __('Size') }}</th>
+                                <th class="px-3 py-2 text-start font-medium text-gray-500 dark:text-gray-300">{{ __('Sealed') }}</th>
+                                <th class="px-3 py-2 text-end font-medium text-gray-500 dark:text-gray-300"></th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-200 dark:divide-white/5">
+                            @foreach ($sessions as $session)
+                                <tr>
+                                    <td class="px-3 py-2 font-mono text-xs">{{ $session['date'] ?? '' }}</td>
+                                    <td class="px-3 py-2">{{ $session['admin'] ?? '' }}</td>
+                                    <td class="px-3 py-2 font-mono text-xs">{{ $session['session_id'] ?? '' }}</td>
+                                    <td class="px-3 py-2 text-end tabular-nums">{{ number_format((int) ($session['size_bytes'] ?? 0)) }} B</td>
+                                    <td class="px-3 py-2">
+                                        @if ($session['sealed'] ?? false)
+                                            <x-filament::badge color="success" icon="heroicon-o-lock-closed" size="sm">
+                                                {{ __('sealed') }}
+                                            </x-filament::badge>
+                                        @else
+                                            <x-filament::badge color="warning" icon="heroicon-o-lock-open" size="sm">
+                                                {{ __('unsealed') }}
+                                            </x-filament::badge>
+                                        @endif
+                                    </td>
+                                    <td class="px-3 py-2 text-end">
+                                        <x-filament::link
+                                            tag="button"
+                                            wire:click="viewTranscript(@js($session['name'] ?? ''))"
+                                            icon="heroicon-o-eye"
+                                        >
+                                            {{ __('View') }}
+                                        </x-filament::link>
+                                    </td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+            @endif
+        </x-filament::section>
 
         @if ($transcript !== null)
-            <div class="rounded-lg border border-gray-200 bg-gray-950 p-4 shadow-sm dark:border-gray-800">
-                <div class="mb-2 flex items-center justify-between text-sm">
-                    <span class="font-mono text-xs text-gray-400">{{ $openName }}</span>
-                    <button
-                        type="button"
+            <x-filament::section
+                :heading="$openName"
+                icon="heroicon-o-document-text"
+            >
+                <x-slot name="headerEnd">
+                    <x-filament::button
+                        color="gray"
+                        size="sm"
+                        icon="heroicon-o-x-mark"
                         wire:click="closeTranscript"
-                        class="rounded bg-gray-700 px-3 py-1 text-xs text-white hover:bg-gray-600"
                     >
                         {{ __('Close') }}
-                    </button>
-                </div>
+                    </x-filament::button>
+                </x-slot>
                 {{-- Plain <pre>: we never {!! !!} the transcript; Blade auto-escapes so
                      arbitrary bytes written by the daemon cannot inject HTML. --}}
-                <pre class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words text-xs text-gray-200">{{ $transcript }}</pre>
-            </div>
+                <pre class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-4 font-mono text-xs text-gray-200">{{ $transcript }}</pre>
+            </x-filament::section>
         @endif
     </div>
 </x-filament-panels::page>
