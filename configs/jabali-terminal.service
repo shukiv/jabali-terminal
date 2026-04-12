@@ -4,8 +4,15 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=notify
-ExecStart=/usr/local/jabali-terminal/venv/bin/python -m jabali_terminal.server
+# The daemon does not call sd_notify; Type=exec keeps systemd from hanging on
+# the notify handshake while still flagging an immediate exec failure as a
+# start failure. The daemon is imported as `daemon.*` from the install dir
+# on PYTHONPATH (flat layout — the daemon directory IS the package); this
+# avoids depending on hatchling's editable .pth generation, which has been
+# observed to produce an empty .pth file on some systems.
+Type=exec
+Environment=PYTHONPATH=/usr/local/jabali-terminal
+ExecStart=/usr/local/jabali-terminal/venv/bin/python -m daemon.server
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s

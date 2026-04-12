@@ -61,6 +61,8 @@ class TerminalServer:
         returns metadata only (no transcript bodies) to keep the index page
         responsive.
         """
+        import re
+
         log_dir = self.config.audit_log_dir
         try:
             entries = []
@@ -74,10 +76,15 @@ class TerminalServer:
                     except OSError:
                         continue
                     # Filename format: <ISO-date>_<admin>_<session-id>.log
-                    parts = name[:-4].split("_", 2)
-                    iso_date = parts[0] if len(parts) > 0 else ""
-                    admin = parts[1] if len(parts) > 1 else ""
-                    session_id = parts[2] if len(parts) > 2 else ""
+                    # session-id is always 16 hex chars (secrets.token_hex(8)),
+                    # so we split from the right to keep admin names that
+                    # happen to contain underscores (e.g. 'admin_1') intact.
+                    stem = name[:-4]
+                    m = re.fullmatch(r"(\d{4}-\d{2}-\d{2})_(.+)_([0-9a-f]{16})", stem)
+                    if m:
+                        iso_date, admin, session_id = m.group(1), m.group(2), m.group(3)
+                    else:
+                        iso_date, admin, session_id = "", "", ""
                     sig_exists = os.path.exists(full + ".sig")
                     entries.append({
                         "name": name,

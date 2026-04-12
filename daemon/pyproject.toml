@@ -6,7 +6,6 @@ build-backend = "hatchling.build"
 name = "jabali-terminal"
 version = "0.1.0"
 description = "Root PTY daemon for Jabali Panel terminal addon"
-readme = "README.md"
 requires-python = ">=3.12"
 authors = [{name = "Shuki Vaknin"}]
 license = {text = "MIT"}
@@ -16,6 +15,7 @@ dependencies = [
     "aiohttp>=3.9.0",
     "cryptography>=42.0.0",
     "aiosqlite>=0.19.0",
+    "pydantic>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -27,9 +27,6 @@ dev = [
     "mypy>=1.7.0",
     "types-cryptography",
 ]
-
-[project.scripts]
-jabali-terminal-daemon = "daemon.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["daemon"]

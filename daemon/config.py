@@ -114,14 +114,18 @@ def load_config(path: str = "/etc/jabali-terminal/jabali-terminal.conf") -> Term
             if not line or line.startswith("#"):
                 continue
 
-            # Parse KEY="value" format
-            match = re.match(r'^(\w+)="([^"]*)"$', line)
+            # Parse KEY="value" or KEY=value (shell-style). Unquoted values
+            # are accepted for integers and simple tokens so the example
+            # config can keep session_idle_seconds=300 readable, matching
+            # the sibling jabali-security convention.
+            match = re.match(r'^(\w+)=(?:"([^"]*)"|(\S+))\s*$', line)
             if not match:
                 raise ValueError(
-                    f"Invalid config line {line_num}: expected KEY=\"value\", got: {line}"
+                    f"Invalid config line {line_num}: expected KEY=value, got: {line}"
                 )
 
-            key, value = match.groups()
+            key = match.group(1)
+            value = match.group(2) if match.group(2) is not None else match.group(3)
             config_dict[key] = value
 
     return TerminalConfig(**config_dict)

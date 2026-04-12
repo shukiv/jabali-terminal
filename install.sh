@@ -318,8 +318,11 @@ install_panel_files() {
     local npm_changed=0
     merge_panel_npm_deps || npm_changed=1
     if [ "$npm_changed" = "1" ] && command -v npm >/dev/null 2>&1; then
+        # Use `npm install`, not `npm ci`: the deps merge mutated package.json
+        # so the lockfile is out of sync; ci would refuse. install updates
+        # both, then we build. --no-audit --no-fund for quiet output.
         run_with_spinner "Installing npm deps" \
-            bash -c "cd '$PANEL_DIR' && npm ci --include=dev --silent"
+            bash -c "cd '$PANEL_DIR' && npm install --no-audit --no-fund --silent"
         run_with_spinner "Building panel assets" \
             bash -c "cd '$PANEL_DIR' && npm run build --silent"
     else
@@ -497,23 +500,31 @@ do_install() {
 
     section "Starting Service"
     systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
-    if systemctl start "$SERVICE_NAME"; then
-        # Poll up to 10s for active state.
-        local i=0
-        while [ $i -lt 10 ]; do
-            if systemctl is-active --quiet "$SERVICE_NAME"; then
+    # Type=exec returns from systemctl start as soon as execve() succeeds, so
+    # a crash-during-startup can race with the is-active check. Sleep briefly
+    # first to let any immediate failure propagate, then require two
+    # consecutive "active" reads with is-failed off.
+    systemctl start "$SERVICE_NAME" || true
+    sleep 2
+    local i=0 last_ok=0
+    while [ $i -lt 10 ]; do
+        if systemctl is-failed --quiet "$SERVICE_NAME"; then
+            last_ok=0
+            break
+        fi
+        if systemctl is-active --quiet "$SERVICE_NAME"; then
+            last_ok=$((last_ok + 1))
+            if [ "$last_ok" -ge 2 ]; then
                 done_ok "Service active"
                 break
             fi
-            sleep 1; i=$((i+1))
-        done
-        if ! systemctl is-active --quiet "$SERVICE_NAME"; then
-            red "Service failed to become active. Last journal lines:"
-            journalctl -u "$SERVICE_NAME" -n 30 --no-pager || true
-            exit 1
+        else
+            last_ok=0
         fi
-    else
-        red "systemctl start $SERVICE_NAME failed."
+        sleep 1; i=$((i+1))
+    done
+    if [ "$last_ok" -lt 2 ]; then
+        red "Service failed to become active. Last journal lines:"
         journalctl -u "$SERVICE_NAME" -n 30 --no-pager || true
         exit 1
     fi

@@ -54,15 +54,19 @@ async def run_pty_session(
     - Idle timeout: both stdin AND stdout silent (SEC-REV-3).
     - Hard timeout: force close regardless of activity (SEC-REV-9).
     """
-    pid, master_fd = pty.openpty()
-
+    # pty.fork() forks and wires the child's stdio to the PTY slave for us.
+    # (pty.openpty() returns two fds, not (pid, fd) — using openpty here was
+    # the original bug that made whoami silently hang.)
+    pid, master_fd = pty.fork()
     if pid == 0:
-        # Child process: exec shell
-        os.setsid()  # New session group
-        os.dup2(master_fd, 0)  # stdin
-        os.dup2(master_fd, 1)  # stdout
-        os.dup2(master_fd, 2)  # stderr
-        os.execv(shell, [shell, "-i"])  # Interactive login shell
+        # Child: clean env so the admin always gets a predictable prompt,
+        # then exec the shell as an interactive login.
+        os.execve(shell, [shell, "-i"], {
+            "TERM": "xterm-256color",
+            "HOME": os.environ.get("HOME", "/root"),
+            "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "LANG": os.environ.get("LANG", "C.UTF-8"),
+        })
         os._exit(127)
 
     # Parent: manage PTY
