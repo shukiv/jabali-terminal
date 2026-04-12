@@ -466,20 +466,34 @@ do_install() {
     if [ -f "$conf" ] && \
        grep -qE '^hmac_secret="[0-9a-f]{64,}"' "$conf" && \
        grep -qE '^audit_hmac_secret="[0-9a-f]{64,}"' "$conf"; then
+        # Re-apply perms in case a previous install left 0640 root:root.
+        if getent group www-data >/dev/null 2>&1; then
+            chown root:www-data "$conf" 2>/dev/null || true
+        fi
+        chmod 0640 "$conf" 2>/dev/null || true
         done_ok "Existing config preserved (idempotent re-install)"
     else
         local hmac_secret audit_secret
         hmac_secret="$(openssl rand -hex 32)"
         audit_secret="$(openssl rand -hex 32)"
-        # Copy the example then substitute the two empty values. Never echo secrets.
-        install -m 0640 -o root -g root \
+        # Config is 0640 root:www-data so the panel (PHP-FPM / FrankenPHP
+        # running as www-data) can read the session-mint HMAC secret while
+        # the daemon (root) still owns the file. Falls back to root:root
+        # on distros without www-data — the daemon still starts but the
+        # panel client's isAvailable() will return false and the re-auth
+        # modal will say "daemon unavailable" until perms are fixed.
+        local conf_group="root"
+        if getent group www-data >/dev/null 2>&1; then
+            conf_group="www-data"
+        fi
+        install -m 0640 -o root -g "$conf_group" \
             "$INSTALL_DIR/configs/jabali-terminal.conf.example" "$conf"
         sed -i \
             -e "s|^hmac_secret=\"\"|hmac_secret=\"${hmac_secret}\"|" \
             -e "s|^audit_hmac_secret=\"\"|audit_hmac_secret=\"${audit_secret}\"|" \
             "$conf"
         unset hmac_secret audit_secret
-        done_ok "Config written with fresh secrets at $conf"
+        done_ok "Config written with fresh secrets at $conf (0640 root:${conf_group})"
     fi
 
     section "Installing systemd Unit"
