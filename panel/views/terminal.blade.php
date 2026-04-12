@@ -128,7 +128,8 @@
                 closeReason: '',
 
                 async init() {
-                    // Nothing to pre-load; the bundle is loaded by @vite above.
+                    // Nothing to pre-load; the bundle is loaded by the Vite
+                    // directive at the top of this view.
                 },
 
                 async submitAuth() {
