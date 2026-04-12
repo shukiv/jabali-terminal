@@ -37,3 +37,10 @@ hmac_secret=""
 # HMAC secret for sealing audit logs (SEC-REV-4). Rotated independently from
 # the token HMAC secret so leaking one does not imply leaking the other.
 audit_hmac_secret=""
+
+# Show the read-only "Terminal Sessions" page in the Filament nav?
+# Set to "false" to hide it. Disabling the UI does NOT disable logging —
+# the daemon still writes every stdin/stdout transcript to
+# /var/log/jabali-terminal/sessions/<id>.log and HMAC-seals it on close.
+# Use the files on disk directly (or logrotate / rsync off-box) for audit.
+sessions_ui_enabled="true"

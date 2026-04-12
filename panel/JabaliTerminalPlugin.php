@@ -40,10 +40,47 @@ class JabaliTerminalPlugin implements Plugin
 
     public function register(Panel $panel): void
     {
-        $panel->pages([
-            Terminal::class,
-            Sessions::class,
-        ]);
+        $pages = [Terminal::class];
+        // Sessions is the read-only audit-log browser. Hiding it doesn't
+        // affect logging — the daemon still writes + HMAC-seals every
+        // transcript under /var/log/jabali-terminal/sessions/. Default on
+        // so existing installs behave as before; ops can flip it off in
+        // /etc/jabali-terminal/jabali-terminal.conf if they prefer the
+        // Filament nav to stay clean.
+        if (self::configBool('sessions_ui_enabled', true)) {
+            $pages[] = Sessions::class;
+        }
+        $panel->pages($pages);
+    }
+
+    /**
+     * Parse a boolean-ish key from /etc/jabali-terminal/jabali-terminal.conf.
+     * Deliberately kept here (not in JabaliTerminalClient) because it runs
+     * during panel boot before the container is warm, and because the
+     * Sessions UI toggle has nothing to do with daemon comms.
+     */
+    private static function configBool(string $key, bool $default): bool
+    {
+        $configFile = '/etc/jabali-terminal/jabali-terminal.conf';
+        if (! is_readable($configFile)) {
+            return $default;
+        }
+        $content = @file_get_contents($configFile);
+        if ($content === false) {
+            return $default;
+        }
+        $pattern = '/^'.preg_quote($key, '/').'="([^"]*)"$/m';
+        if (preg_match($pattern, $content, $m) !== 1) {
+            return $default;
+        }
+        $v = strtolower(trim($m[1]));
+        if (in_array($v, ['false', '0', 'no', 'off', ''], true)) {
+            return false;
+        }
+        if (in_array($v, ['true', '1', 'yes', 'on'], true)) {
+            return true;
+        }
+        return $default;
     }
 
     public function boot(Panel $panel): void
