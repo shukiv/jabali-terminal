@@ -6,10 +6,12 @@ uses semantic versioning for tags.
 
 ## [Unreleased]
 
-Post-v0.1.0 work. Nothing here is breaking for existing installs — the
-reverse-proxy migration from nginx → Caddy matches what the panel was
-actually running on, and every new config key has a backward-compatible
-default.
+## [0.1.1] — 2026-04-13
+
+Post-v0.1.0 stabilisation. Nothing here is breaking for existing
+installs — the reverse-proxy migration from nginx → Caddy matches
+what the panel was actually running on, and every new security
+control is additive.
 
 ### Added
 
