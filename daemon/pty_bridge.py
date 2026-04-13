@@ -80,12 +80,20 @@ async def run_pty_session(
         last_stdin = session_start
         last_stdout = session_start
 
+        # Tracks exit code for paths that `break` out of the loop before the
+        # child is reaped. The finally block seals the audit log with this
+        # code if run_pty_session exits via any route other than the normal
+        # "child exited" return (which handles its own seal inline).
+        pending_exit_code: int | None = None
+
         while True:
             # Check hard timeout
             elapsed = time.time() - session_start
             if elapsed > hard_timeout_seconds:
                 audit_session.write_warning(f"hard timeout at {time.time()}")
                 os.kill(pid, signal.SIGTERM)
+                # GNU `timeout` convention: 124 = time limit exceeded.
+                pending_exit_code = 124
                 break
 
             # Check idle timeout (both stdin AND stdout silent)
@@ -95,6 +103,7 @@ async def run_pty_session(
             if stdin_idle > idle_timeout_seconds and stdout_idle > idle_timeout_seconds:
                 audit_session.write_warning(f"idle timeout at {time.time()}")
                 os.kill(pid, signal.SIGTERM)
+                pending_exit_code = 124
                 break
 
             # Read from PTY (non-blocking, timeout 0.1s)
@@ -115,6 +124,9 @@ async def run_pty_session(
                 if msg is None:
                     # Peer closed — signal the shell and exit the loop.
                     os.kill(pid, signal.SIGHUP)
+                    # 129 = 128 + SIGHUP(1), conventional exit code for a
+                    # process terminated by the shell hanging up.
+                    pending_exit_code = 129
                     break
                 if isinstance(msg, (bytes, bytearray)):
                     data = bytes(msg)
@@ -181,6 +193,23 @@ async def run_pty_session(
             os.waitpid(pid, 0)
         except OSError:
             pass
+        # Seal the audit log on every exit path. AuditSession.close() is
+        # idempotent (guarded by self._closed), so if the normal child-exit
+        # branch already sealed, this is a no-op. For the break paths (hard
+        # timeout / idle timeout / peer closed), pending_exit_code carries
+        # the reason; for any other unexpected exception, default to 1 so
+        # the log doesn't stay orphaned. Without this, a dropped WS tab
+        # used to leave an "unsealed" log until the next daemon restart
+        # when scan_unclosed_logs() would fix it — now it seals immediately.
+        try:
+            audit_session.close(exit_code=pending_exit_code if pending_exit_code is not None else 1)
+        except Exception:
+            # Don't mask the original exception (if any) with a seal error.
+            pass
+
+    # Reached only when a break left the loop without returning. Report the
+    # reason to the caller; ws_handler's finally then closes the WS.
+    return pending_exit_code if pending_exit_code is not None else 1
 
 
 def _set_pty_size(fd: int, rows: int, cols: int) -> None:
