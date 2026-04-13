@@ -5,20 +5,20 @@ import tempfile
 
 import pytest
 
-from daemon.config import TerminalConfig, load_config
+from daemon.config import load_config
 
 
 def test_load_config_valid():
     """Test loading valid configuration."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".conf", delete=False) as f:
-        f.write(f'socket_path="/run/test.sock"\n')
-        f.write(f'audit_log_dir="/var/log/test"\n')
-        f.write(f'nonce_db_path="/var/lib/test/nonces.db"\n')
-        f.write(f'session_idle_seconds="300"\n')
-        f.write(f'session_hard_seconds="3600"\n')
-        f.write(f'max_concurrent_sessions="4"\n')
-        f.write(f'allowed_ips=""\n')
-        f.write(f'shell="/bin/bash"\n')
+        f.write('socket_path="/run/test.sock"\n')
+        f.write('audit_log_dir="/var/log/test"\n')
+        f.write('nonce_db_path="/var/lib/test/nonces.db"\n')
+        f.write('session_idle_seconds="300"\n')
+        f.write('session_hard_seconds="3600"\n')
+        f.write('max_concurrent_sessions="4"\n')
+        f.write('allowed_ips=""\n')
+        f.write('shell="/bin/bash"\n')
         f.write(f'hmac_secret="{"0" * 64}"\n')
         f.write(f'audit_hmac_secret="{"1" * 64}"\n')
         f.flush()
@@ -34,8 +34,8 @@ def test_load_config_valid():
 def test_load_config_missing_secret():
     """Test loading config with missing HMAC secret."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".conf", delete=False) as f:
-        f.write(f'shell="/bin/bash"\n')
-        f.write(f'hmac_secret=""\n')  # Empty secret
+        f.write('shell="/bin/bash"\n')
+        f.write('hmac_secret=""\n')  # Empty secret
         f.flush()
 
         try:
@@ -48,7 +48,7 @@ def test_load_config_missing_secret():
 def test_load_config_short_secret():
     """Test loading config with too-short HMAC secret."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".conf", delete=False) as f:
-        f.write(f'shell="/bin/bash"\n')
+        f.write('shell="/bin/bash"\n')
         f.write(f'hmac_secret="{"0" * 32}"\n')  # Only 32 hex chars (16 bytes)
         f.write(f'audit_hmac_secret="{"1" * 64}"\n')
         f.flush()
@@ -69,7 +69,7 @@ def test_config_nonexistent_file():
 def test_config_invalid_line():
     """Test loading config with invalid line format."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".conf", delete=False) as f:
-        f.write(f'invalid_line_format\n')
+        f.write('invalid_line_format\n')
         f.flush()
 
         try:

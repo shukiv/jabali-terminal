@@ -1,6 +1,5 @@
 """TDD: PTY bounds and input validation."""
 
-import json
 import pytest
 
 from daemon.pty_bridge import _set_pty_size

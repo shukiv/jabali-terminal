@@ -1,13 +1,11 @@
 """TDD: One-session-per-admin enforcement."""
 
-import asyncio
 import secrets
 import tempfile
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
-from daemon.auth import mint_token
 from daemon.config import TerminalConfig
 from daemon.server import TerminalServer
 

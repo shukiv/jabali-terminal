@@ -1,6 +1,5 @@
 """TDD: Audit session integrity and state safety."""
 
-import asyncio
 import os
 import secrets
 import tempfile
@@ -89,7 +88,7 @@ def test_audit_session_idempotent_close(test_config):
     assert os.path.exists(audit.sig_path)
 
     # Read the log to ensure it's properly formatted
-    with open(audit.log_path, "r") as f:
+    with open(audit.log_path) as f:
         log_content = f.read()
 
     assert "Session start:" in log_content
@@ -131,7 +130,7 @@ def test_audit_session_concurrent_close_and_write(test_config):
         audit.write_stdout(b"Test output 2\n")
 
     # Read the log and verify it's not corrupted
-    with open(audit.log_path, "r") as f:
+    with open(audit.log_path) as f:
         log_content = f.read()
 
     assert "[STDOUT] Test output 1" in log_content

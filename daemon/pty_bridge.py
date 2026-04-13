@@ -5,9 +5,8 @@ import json
 import os
 import pty
 import signal
-import subprocess
 import time
-from typing import Callable
+from collections.abc import Callable
 
 from .audit import AuditSession
 
@@ -162,7 +161,7 @@ async def run_pty_session(
                             # Malformed cols/rows in resize message — ignore
                             continue
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass  # No data available
 
             # Check if child exited

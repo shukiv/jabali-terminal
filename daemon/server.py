@@ -1,20 +1,16 @@
 """WebSocket server and API endpoints."""
 
 import asyncio
-import base64
-import json
 import logging
 import os
 import secrets
 import sys
-from typing import Optional
 
 from aiohttp import web
-from websockets.asyncio.server import serve, ServerConnection
 
 from .audit import AuditSession, scan_unclosed_logs
 from .auth import TokenError, mint_token, verify_token
-from .config import load_config, TerminalConfig
+from .config import TerminalConfig, load_config
 from .nonce_store import NonceStore
 from .pty_bridge import run_pty_session
 
@@ -251,7 +247,7 @@ class TerminalServer:
         # Wait for auth response (5s timeout per SEC-REV-1)
         try:
             auth_msg = await asyncio.wait_for(ws.receive_json(), timeout=5.0)
-        except (asyncio.TimeoutError, ValueError) as e:
+        except (TimeoutError, ValueError) as e:
             await ws.close(code=1008, message="401 invalid token")
             logger.warning(f"Auth timeout or invalid JSON: {e}")
             return ws

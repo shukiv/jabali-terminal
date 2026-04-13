@@ -142,7 +142,7 @@ class AuditSession:
 
         # Compute HMAC over log content + metadata
         # Metadata: admin_id, ip, session_id
-        metadata = f"{self.admin_id}|{self.ip}|{self.session_id}".encode("utf-8")
+        metadata = f"{self.admin_id}|{self.ip}|{self.session_id}".encode()
         message = log_content + metadata
 
         secret_bytes = bytes.fromhex(self.audit_hmac_secret)
@@ -199,7 +199,7 @@ async def scan_unclosed_logs(
 
             # Extract metadata from opening line
             # Format: `# Session start: <iso-ts>, admin=<user>, ip=<ip>, session=<id>`
-            with open(log_file, "r") as f:
+            with open(log_file) as f:
                 first_line = f.readline()
 
             try:
@@ -213,7 +213,7 @@ async def scan_unclosed_logs(
                 # We'll use 0 as a placeholder since the session was interrupted.
                 # Or we could parse from the log records if they embed it.
                 # For now, use (admin_name, ip, session_id) as metadata.
-                metadata = f"0|{ip}|{session_id}".encode("utf-8")
+                metadata = f"0|{ip}|{session_id}".encode()
                 message = log_content + metadata
 
                 secret_bytes = bytes.fromhex(audit_hmac_secret)
@@ -225,7 +225,7 @@ async def scan_unclosed_logs(
                     f.write(hmac_hex)
 
                 os.chmod(sig_file, 0o600)
-            except Exception as e:
+            except Exception:
                 # If parsing fails, just write an empty signature to mark it sealed
                 # (ops can investigate the log manually)
                 with open(sig_file, "w") as f:

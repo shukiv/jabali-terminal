@@ -6,10 +6,6 @@ import hmac
 import struct
 import time
 from dataclasses import dataclass
-from typing import Optional
-
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.hmac import HMAC
 
 
 @dataclass
