@@ -151,9 +151,16 @@ async def run_pty_session(
                     except json.JSONDecodeError:
                         continue
                     if msg_json.get("type") == "resize":
-                        cols = int(msg_json.get("cols", 80))
-                        rows = int(msg_json.get("rows", 24))
-                        _set_pty_size(master_fd, rows, cols)
+                        try:
+                            cols = int(msg_json.get("cols", 80))
+                            rows = int(msg_json.get("rows", 24))
+                            # Validate dimensions (PTY size must be positive)
+                            if rows < 1 or rows > 999 or cols < 1 or cols > 999:
+                                continue  # Reject invalid dimensions
+                            _set_pty_size(master_fd, rows, cols)
+                        except (TypeError, ValueError):
+                            # Malformed cols/rows in resize message — ignore
+                            continue
 
             except asyncio.TimeoutError:
                 pass  # No data available
@@ -220,5 +227,5 @@ def _set_pty_size(fd: int, rows: int, cols: int) -> None:
 
     try:
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-    except OSError:
-        pass  # Ignore errors
+    except Exception:
+        pass  # Ignore any errors (invalid fd, bad types, struct packing, ioctl, etc.)
