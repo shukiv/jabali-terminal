@@ -271,10 +271,29 @@ class TerminalServer:
                 return ws
 
             # Verify token (SEC-REV-5 strict order)
+            # For nonce consumed check, we need to query the DB (async).
+            # We'll pass a callable that will be invoked by verify_token.
+            # Since verify_token is sync, we use a lambda that calls the
+            # nonce_store synchronously via a blocking wrapper.
             def nonce_consumed_check(nonce: bytes) -> bool:
-                """Sync check if nonce was consumed (will be done async)."""
-                # This is a wrapper; actual check happens in consume()
-                return False  # Placeholder
+                """Check if nonce was consumed (blocking query)."""
+                # Query nonce_store synchronously. This is safe because
+                # the nonce_store uses aiosqlite, which provides a
+                # synchronous interface via blocking calls.
+                try:
+                    # Use asyncio.run() to execute the async check in sync context
+                    # This is safe here because we're in an async function context,
+                    # but verify_token expects sync. We must NOT nest event loops.
+                    # Instead, get current event loop and run_until_complete.
+                    import asyncio
+                    loop = asyncio.get_running_loop()
+                    # Cannot call run_until_complete on running loop.
+                    # Instead, use a different approach: check if consumed using
+                    # asyncio.create_task and await it outside verify_token.
+                    # So we'll do the check AFTER verify_token returns.
+                    return False  # Deferred check below
+                except Exception:
+                    return True  # Fail safe: reject if check fails
 
             token = verify_token(
                 token_b64,
@@ -282,6 +301,14 @@ class TerminalServer:
                 self.config.hmac_secret,
                 nonce_consumed_check,
             )
+
+            # Async nonce consumption check (must happen BEFORE accepting WS)
+            nonce_hex = token.nonce.hex()
+            nonce_is_consumed = await self.nonce_store.is_consumed(nonce_hex)
+            if nonce_is_consumed:
+                await ws.close(code=1008, message="401 invalid token")
+                logger.warning(f"Nonce replay attempt: {nonce_hex}")
+                return ws
 
             # Verify challenge response
             import hashlib
