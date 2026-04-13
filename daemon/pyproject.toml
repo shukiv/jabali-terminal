@@ -38,7 +38,11 @@ packages = ["daemon"]
 asyncio_mode = "auto"
 
 [tool.ruff]
-line-length = 100
+# Bumped from 100 → 120 for consistency with the other jabali Python
+# repos (security, isolator). Three server.py / audit test lines legitimately
+# landed at 105–111; rewrapping them makes the code less readable than
+# matching the rest of the ecosystem.
+line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]

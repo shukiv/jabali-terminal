@@ -204,15 +204,19 @@ async def scan_unclosed_logs(
 
             try:
                 # Parse: admin=<user>, ip=<ip>, session=<id>
+                # admin_name is in the log's first line and therefore already
+                # covered by the HMAC (it's part of log_content), so we don't
+                # extract it separately — the metadata trailer only binds the
+                # fields the normal seal path binds: admin_id | ip | session_id.
                 parts = first_line.split(", ")
-                admin_name = parts[1].split("=")[1]
                 ip = parts[2].split("=")[1]
                 session_id = parts[3].split("=")[1].strip()
 
-                # For HMAC, we need admin_id which isn't in the log.
-                # We'll use 0 as a placeholder since the session was interrupted.
-                # Or we could parse from the log records if they embed it.
-                # For now, use (admin_name, ip, session_id) as metadata.
+                # The normal seal path uses the real admin_id (an integer).
+                # During recovery the ID isn't in the log header, so we use 0
+                # as a placeholder. Verifiers of recovered logs must be aware
+                # that admin_id=0 was substituted; the `# Session interrupted:`
+                # line appended just above is the breadcrumb.
                 metadata = f"0|{ip}|{session_id}".encode()
                 message = log_content + metadata
 

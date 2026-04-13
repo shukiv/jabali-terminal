@@ -362,7 +362,13 @@ class TerminalServer:
                 return None
 
             try:
-                exit_code = await run_pty_session(
+                # run_pty_session returns the PTY exit code (or 124 on idle
+                # timeout, 129 on peer-close). We don't surface it to the
+                # operator yet — the audit log records it via AuditSession
+                # on the finally path inside the bridge — but we discard the
+                # return value explicitly so a future reader doesn't think
+                # it was meant to be consumed.
+                _ = await run_pty_session(
                     self.config.shell,
                     ws_send,
                     ws_recv,

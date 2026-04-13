@@ -38,7 +38,7 @@ def test_resize_message_parsing_unvalidated():
     msg_json = {"type": "resize", "cols": "not_a_number"}
 
     with pytest.raises(ValueError):
-        cols = int(msg_json.get("cols", 80))
+        _ = int(msg_json.get("cols", 80))
 
     # This crash would propagate and close the session
     # The session would be terminated, and the admin would lose their terminal

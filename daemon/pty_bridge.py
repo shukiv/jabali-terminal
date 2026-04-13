@@ -73,9 +73,11 @@ async def run_pty_session(
         # Make PTY non-blocking
         os.set_blocking(master_fd, False)
 
-        # Track timeouts
+        # Track timeouts. The idle check uses last_stdin AND last_stdout
+        # independently (only times out when both have been silent past
+        # idle_timeout_seconds — see below), so we don't keep a combined
+        # last_activity clock.
         session_start = time.time()
-        last_activity = session_start
         last_stdin = session_start
         last_stdout = session_start
 
@@ -113,7 +115,6 @@ async def run_pty_session(
                     audit_session.write_stdout(data)
                     await ws_send(data)  # Binary frame
                     last_stdout = time.time()
-                    last_activity = time.time()
             except (OSError, BlockingIOError):
                 pass  # No data available
 
@@ -143,7 +144,6 @@ async def run_pty_session(
                     os.write(master_fd, data)
                     audit_session.write_stdin(data)
                     last_stdin = time.time()
-                    last_activity = time.time()
                 elif isinstance(msg, str):
                     try:
                         msg_json = json.loads(msg)
