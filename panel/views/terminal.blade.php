@@ -7,126 +7,276 @@
     --}}
     @vite(['resources/css/jabali-terminal.css', 'resources/js/jabali-terminal.js'])
 
-    <div
-        id="jt-root"
-        x-data="jabaliTerminal()"
-        x-init="init()"
-        wire:ignore
-        class="flex flex-col gap-4"
-    >
-        {{-- Re-auth section --}}
-        <div x-show="stage === 'auth'" x-cloak>
-            <x-filament::section
-                :heading="__('Re-authenticate to open a root shell')"
-                :description="$requiresTwoFactor
-                    ? __('A fresh password and 2FA code are required every time. The shell runs as root.')
-                    : __('A fresh password is required every time. The shell runs as root.')"
-                icon="heroicon-o-lock-closed"
+    {{--
+        Outer Alpine scope holds the tab state only. Terminal + Sessions each
+        get their own subtree with x-show so switching tabs does NOT tear down
+        the inner xterm x-data block (the WS + PTY stay alive while the user
+        peeks at transcripts).
+    --}}
+    <div x-data="{ tab: 'terminal' }" class="flex flex-col gap-4">
+        {{--
+            Tab bar is intentionally hand-rolled rather than using
+            <x-filament::tabs>: the Filament component decides the active
+            class at server-render time via a :active Blade prop, which
+            can't see Alpine state. A Livewire-driven $activeTab would
+            re-render the component tree and tear down the xterm canvas
+            on every tab switch. Styling below mirrors the Filament tab
+            look (border-bottom on active) using Tailwind + Alpine.
+        --}}
+        <nav
+            role="tablist"
+            class="flex gap-6 border-b border-gray-200 dark:border-white/10"
+        >
+            <button
+                type="button"
+                role="tab"
+                x-on:click="tab = 'terminal'"
+                x-bind:aria-selected="tab === 'terminal'"
+                class="flex items-center gap-2 -mb-px border-b-2 px-1 py-3 text-sm font-medium transition"
+                :class="tab === 'terminal'
+                    ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
             >
-                <form @submit.prevent="submitAuth()" class="flex flex-col gap-4">
-                    <x-filament::input.wrapper>
-                        <x-filament::input
-                            type="password"
-                            x-model="password"
-                            :placeholder="__('Password')"
-                            autocomplete="current-password"
-                            required
-                            x-bind:disabled="busy"
-                        />
-                    </x-filament::input.wrapper>
+                <x-filament::icon icon="heroicon-o-command-line" class="h-5 w-5" />
+                {{ __('Terminal') }}
+            </button>
+            <button
+                type="button"
+                role="tab"
+                x-on:click="tab = 'sessions'"
+                x-bind:aria-selected="tab === 'sessions'"
+                class="flex items-center gap-2 -mb-px border-b-2 px-1 py-3 text-sm font-medium transition"
+                :class="tab === 'sessions'
+                    ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+            >
+                <x-filament::icon icon="heroicon-o-clock" class="h-5 w-5" />
+                {{ __('Sessions') }}
+            </button>
+        </nav>
 
-                    @if ($requiresTwoFactor)
+        {{-- ───────── Terminal tab ───────── --}}
+        <div
+            x-show="tab === 'terminal'"
+            id="jt-root"
+            x-data="jabaliTerminal()"
+            x-init="init()"
+            wire:ignore
+            class="flex flex-col gap-4"
+        >
+            {{-- Re-auth section --}}
+            <div x-show="stage === 'auth'" x-cloak>
+                <x-filament::section
+                    :heading="__('Re-authenticate to open a root shell')"
+                    :description="$requiresTwoFactor
+                        ? __('A fresh password and 2FA code are required every time. The shell runs as root.')
+                        : __('A fresh password is required every time. The shell runs as root.')"
+                    icon="heroicon-o-lock-closed"
+                >
+                    <form @submit.prevent="submitAuth()" class="flex flex-col gap-4">
                         <x-filament::input.wrapper>
                             <x-filament::input
-                                type="text"
-                                x-model="twoFactorCode"
-                                :placeholder="__('2FA code')"
-                                inputmode="numeric"
-                                pattern="[0-9]*"
-                                maxlength="10"
-                                autocomplete="one-time-code"
+                                type="password"
+                                x-model="password"
+                                :placeholder="__('Password')"
+                                autocomplete="current-password"
                                 required
                                 x-bind:disabled="busy"
                             />
                         </x-filament::input.wrapper>
-                    @endif
 
-                    <template x-if="error">
-                        <div>
-                            <x-filament::badge color="danger" size="lg" class="w-full">
-                                <span x-text="error"></span>
-                            </x-filament::badge>
+                        @if ($requiresTwoFactor)
+                            <x-filament::input.wrapper>
+                                <x-filament::input
+                                    type="text"
+                                    x-model="twoFactorCode"
+                                    :placeholder="__('2FA code')"
+                                    inputmode="numeric"
+                                    pattern="[0-9]*"
+                                    maxlength="10"
+                                    autocomplete="one-time-code"
+                                    required
+                                    x-bind:disabled="busy"
+                                />
+                            </x-filament::input.wrapper>
+                        @endif
+
+                        <template x-if="error">
+                            <div>
+                                <x-filament::badge color="danger" size="lg" class="w-full">
+                                    <span x-text="error"></span>
+                                </x-filament::badge>
+                            </div>
+                        </template>
+
+                        <x-filament::button
+                            type="submit"
+                            color="primary"
+                            size="lg"
+                            icon="heroicon-o-command-line"
+                            x-bind:disabled="busy || password.length === 0 || ({{ $requiresTwoFactor ? 'true' : 'false' }} && twoFactorCode.length === 0)"
+                        >
+                            <span x-show="!busy">{{ __('Open terminal') }}</span>
+                            <span x-show="busy" x-cloak>{{ __('Opening…') }}</span>
+                        </x-filament::button>
+                    </form>
+                </x-filament::section>
+            </div>
+
+            {{-- Live terminal --}}
+            <div x-show="stage === 'live'" x-cloak class="flex flex-col gap-3">
+                <x-filament::section>
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <template x-if="connected">
+                                <x-filament::badge color="success" icon="heroicon-o-signal">
+                                    {{ __('Connected') }}
+                                </x-filament::badge>
+                            </template>
+                            <template x-if="!connected">
+                                <x-filament::badge color="warning" icon="heroicon-o-signal-slash">
+                                    {{ __('Connecting…') }}
+                                </x-filament::badge>
+                            </template>
                         </div>
-                    </template>
+                        <x-filament::button
+                            type="button"
+                            color="danger"
+                            size="sm"
+                            icon="heroicon-o-x-mark"
+                            x-on:click="endSession()"
+                        >
+                            {{ __('End session') }}
+                        </x-filament::button>
+                    </div>
+                </x-filament::section>
 
-                    <x-filament::button
-                        type="submit"
-                        color="primary"
-                        size="lg"
-                        icon="heroicon-o-command-line"
-                        x-bind:disabled="busy || password.length === 0 || ({{ $requiresTwoFactor ? 'true' : 'false' }} && twoFactorCode.length === 0)"
-                    >
-                        <span x-show="!busy">{{ __('Open terminal') }}</span>
-                        <span x-show="busy" x-cloak>{{ __('Opening…') }}</span>
-                    </x-filament::button>
-                </form>
-            </x-filament::section>
+                <div id="jt-xterm" class="fi-section rounded-xl bg-black p-2 min-h-[60vh]"></div>
+
+                <template x-if="warning">
+                    <div>
+                        <x-filament::badge color="warning" icon="heroicon-o-exclamation-triangle" size="lg">
+                            <span x-text="warning"></span>
+                        </x-filament::badge>
+                    </div>
+                </template>
+            </div>
+
+            {{-- Closed state --}}
+            <div x-show="stage === 'closed'" x-cloak>
+                <x-filament::section icon="heroicon-o-power">
+                    <div class="flex flex-col items-center justify-center gap-4 py-6">
+                        <p class="text-sm text-gray-500 dark:text-gray-400" x-text="closeReason || '{{ __('Session closed') }}'"></p>
+                        <x-filament::button
+                            type="button"
+                            color="primary"
+                            icon="heroicon-o-arrow-path"
+                            x-on:click="resetToAuth()"
+                        >
+                            {{ __('Open another session') }}
+                        </x-filament::button>
+                    </div>
+                </x-filament::section>
+            </div>
         </div>
 
-        {{-- Live terminal --}}
-        <div x-show="stage === 'live'" x-cloak class="flex flex-col gap-3">
+        {{-- ───────── Sessions tab ───────── --}}
+        <div x-show="tab === 'sessions'" x-cloak class="flex flex-col gap-4">
             <x-filament::section>
                 <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-2">
-                        <template x-if="connected">
-                            <x-filament::badge color="success" icon="heroicon-o-signal">
-                                {{ __('Connected') }}
-                            </x-filament::badge>
-                        </template>
-                        <template x-if="!connected">
-                            <x-filament::badge color="warning" icon="heroicon-o-signal-slash">
-                                {{ __('Connecting…') }}
-                            </x-filament::badge>
-                        </template>
-                    </div>
+                    <p class="text-sm text-gray-500 dark:text-gray-400">
+                        {{ __('Last 100 sessions. Transcripts are sealed with HMAC on close.') }}
+                    </p>
                     <x-filament::button
-                        type="button"
-                        color="danger"
+                        color="gray"
                         size="sm"
-                        icon="heroicon-o-x-mark"
-                        x-on:click="endSession()"
-                    >
-                        {{ __('End session') }}
-                    </x-filament::button>
-                </div>
-            </x-filament::section>
-
-            <div id="jt-xterm" class="fi-section rounded-xl bg-black p-2 min-h-[60vh]"></div>
-
-            <template x-if="warning">
-                <div>
-                    <x-filament::badge color="warning" icon="heroicon-o-exclamation-triangle" size="lg">
-                        <span x-text="warning"></span>
-                    </x-filament::badge>
-                </div>
-            </template>
-        </div>
-
-        {{-- Closed state --}}
-        <div x-show="stage === 'closed'" x-cloak>
-            <x-filament::section icon="heroicon-o-power">
-                <div class="flex flex-col items-center justify-center gap-4 py-6">
-                    <p class="text-sm text-gray-500 dark:text-gray-400" x-text="closeReason || '{{ __('Session closed') }}'"></p>
-                    <x-filament::button
-                        type="button"
-                        color="primary"
                         icon="heroicon-o-arrow-path"
-                        x-on:click="resetToAuth()"
+                        wire:click="refreshSessions"
                     >
-                        {{ __('Open another session') }}
+                        {{ __('Refresh') }}
                     </x-filament::button>
                 </div>
             </x-filament::section>
+
+            <x-filament::section>
+                @if (empty($sessions))
+                    <div class="flex flex-col items-center justify-center gap-2 py-10 text-center">
+                        <x-filament::icon
+                            icon="heroicon-o-clock"
+                            class="h-8 w-8 text-gray-400"
+                        />
+                        <p class="text-sm text-gray-500 dark:text-gray-400">
+                            {{ __('No sessions recorded yet.') }}
+                        </p>
+                    </div>
+                @else
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-start text-sm">
+                            <thead>
+                                <tr class="border-b border-gray-200 dark:border-white/10">
+                                    <th class="px-3 py-2 text-start font-medium text-gray-500 dark:text-gray-300">{{ __('Date') }}</th>
+                                    <th class="px-3 py-2 text-start font-medium text-gray-500 dark:text-gray-300">{{ __('Admin') }}</th>
+                                    <th class="px-3 py-2 text-start font-medium text-gray-500 dark:text-gray-300">{{ __('Session') }}</th>
+                                    <th class="px-3 py-2 text-end font-medium text-gray-500 dark:text-gray-300">{{ __('Size') }}</th>
+                                    <th class="px-3 py-2 text-start font-medium text-gray-500 dark:text-gray-300">{{ __('Sealed') }}</th>
+                                    <th class="px-3 py-2 text-end font-medium text-gray-500 dark:text-gray-300"></th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-200 dark:divide-white/5">
+                                @foreach ($sessions as $session)
+                                    <tr>
+                                        <td class="px-3 py-2 font-mono text-xs">{{ $session['date'] ?? '' }}</td>
+                                        <td class="px-3 py-2">{{ $session['admin'] ?? '' }}</td>
+                                        <td class="px-3 py-2 font-mono text-xs">{{ $session['session_id'] ?? '' }}</td>
+                                        <td class="px-3 py-2 text-end tabular-nums">{{ number_format((int) ($session['size_bytes'] ?? 0)) }} B</td>
+                                        <td class="px-3 py-2">
+                                            @if ($session['sealed'] ?? false)
+                                                <x-filament::badge color="success" icon="heroicon-o-lock-closed" size="sm">
+                                                    {{ __('sealed') }}
+                                                </x-filament::badge>
+                                            @else
+                                                <x-filament::badge color="warning" icon="heroicon-o-lock-open" size="sm">
+                                                    {{ __('unsealed') }}
+                                                </x-filament::badge>
+                                            @endif
+                                        </td>
+                                        <td class="px-3 py-2 text-end">
+                                            <x-filament::link
+                                                tag="button"
+                                                wire:click="viewTranscript(@js($session['name'] ?? ''))"
+                                                icon="heroicon-o-eye"
+                                            >
+                                                {{ __('View') }}
+                                            </x-filament::link>
+                                        </td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
+                @endif
+            </x-filament::section>
+
+            @if ($transcript !== null)
+                <x-filament::section
+                    :heading="$openName"
+                    icon="heroicon-o-document-text"
+                >
+                    <x-slot name="headerEnd">
+                        <x-filament::button
+                            color="gray"
+                            size="sm"
+                            icon="heroicon-o-x-mark"
+                            wire:click="closeTranscript"
+                        >
+                            {{ __('Close') }}
+                        </x-filament::button>
+                    </x-slot>
+                    {{-- Plain <pre>: we never {!! !!} the transcript; Blade auto-escapes so
+                         arbitrary bytes written by the daemon cannot inject HTML. --}}
+                    <pre class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-4 font-mono text-xs text-gray-200">{{ $transcript }}</pre>
+                </x-filament::section>
+            @endif
         </div>
     </div>
 

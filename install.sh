@@ -305,13 +305,17 @@ install_panel_files() {
     install -m 0644 "$INSTALL_DIR/panel/JabaliTerminalServiceProvider.php" "$PANEL_APP_DIR/JabaliTerminalServiceProvider.php"
     install -m 0644 "$INSTALL_DIR/panel/JabaliTerminalClient.php"          "$PANEL_APP_DIR/JabaliTerminalClient.php"
     install -m 0644 "$INSTALL_DIR/panel/Pages/Terminal.php"         "$PANEL_APP_DIR/Pages/Terminal.php"
-    install -m 0644 "$INSTALL_DIR/panel/Pages/Sessions.php"         "$PANEL_APP_DIR/Pages/Sessions.php"
     install -m 0644 "$INSTALL_DIR/panel/Http/PreventFramingMiddleware.php" \
                     "$PANEL_APP_DIR/Http/PreventFramingMiddleware.php"
     install -m 0644 "$INSTALL_DIR/panel/Http/Controllers/TerminalSessionController.php" \
                     "$PANEL_APP_DIR/Http/Controllers/TerminalSessionController.php"
     install -m 0644 "$INSTALL_DIR/panel/views/terminal.blade.php"   "$PANEL_APP_DIR/views/terminal.blade.php"
-    install -m 0644 "$INSTALL_DIR/panel/views/sessions.blade.php"   "$PANEL_APP_DIR/views/sessions.blade.php"
+
+    # Clean up legacy Sessions page + view from prior installs. Audit
+    # transcripts (under $LOG_DIR/sessions/) are untouched — only the
+    # defunct Filament page files are removed. Sessions now lives as a
+    # tab inside Pages/Terminal.php.
+    rm -f "$PANEL_APP_DIR/Pages/Sessions.php" "$PANEL_APP_DIR/views/sessions.blade.php"
     install -m 0644 "$INSTALL_DIR/panel/resources/js/jabali-terminal.js"   "$PANEL_DIR/resources/js/jabali-terminal.js"
     install -m 0644 "$INSTALL_DIR/panel/resources/css/jabali-terminal.css" "$PANEL_DIR/resources/css/jabali-terminal.css"
     install -m 0644 "$INSTALL_DIR/panel/tests/Feature/TerminalAuthTest.php" \

@@ -5,12 +5,18 @@ declare(strict_types=1);
 namespace App\JabaliTerminal\Pages;
 
 use App\JabaliTerminal\Http\PreventFramingMiddleware;
+use App\JabaliTerminal\JabaliTerminalClient;
 use BackedEnum;
 use Filament\Pages\Page;
 use UnitEnum;
 
 /**
- * Browser root terminal page.
+ * Browser root terminal + session transcript browser.
+ *
+ * The page has two tabs:
+ *  - Terminal: re-auth → live xterm.js PTY (Alpine-driven, WS stays alive
+ *    across tab switches because Alpine only toggles display:none).
+ *  - Sessions: read-only index of HMAC-sealed transcripts (Livewire).
  *
  * Security posture (see docs/SECURITY.md):
  *  - canAccess() hard-fails for non-admins BEFORE mount runs.
@@ -23,6 +29,9 @@ use UnitEnum;
  *    persists it.
  *  - SEC-REV-8: PreventFramingMiddleware pins X-Frame-Options: DENY and
  *    CSP frame-ancestors 'none' on every response.
+ *  - Session transcripts are fetched lazily via viewTranscript() through
+ *    the unix socket. The daemon enforces a 1 MiB cap + path whitelist;
+ *    this page only renders what it receives as plain text.
  */
 class Terminal extends Page
 {
@@ -68,10 +77,51 @@ class Terminal extends Page
      */
     public bool $requiresTwoFactor = false;
 
+    /**
+     * Sealed/unsealed session transcripts, loaded on mount and on refresh.
+     *
+     * @var array<int, array<string, mixed>>
+     */
+    public array $sessions = [];
+
+    /** Active transcript body (plain text only, never rendered as HTML). */
+    public ?string $transcript = null;
+
+    /** File name of the currently open transcript. */
+    public ?string $openName = null;
+
     public function mount(): void
     {
         abort_unless(static::canAccess(), 403);
         $user = auth()->user();
         $this->requiresTwoFactor = $user !== null && ! empty($user->two_factor_secret);
+
+        // Session list is cheap (directory listing over the unix socket);
+        // fetch once so the Sessions tab is populated on first render
+        // without a Livewire round-trip.
+        $this->refreshSessions();
+    }
+
+    public function refreshSessions(): void
+    {
+        $this->sessions = app(JabaliTerminalClient::class)->listSessions();
+    }
+
+    public function viewTranscript(string $name): void
+    {
+        // Re-validate on every call. The client + daemon both validate too,
+        // but the Livewire property is attacker-controlled.
+        if (! preg_match('/^[0-9A-Za-z._-]{1,128}\.log$/', $name)) {
+            return;
+        }
+
+        $this->openName = $name;
+        $this->transcript = app(JabaliTerminalClient::class)->getTranscript($name);
+    }
+
+    public function closeTranscript(): void
+    {
+        $this->openName = null;
+        $this->transcript = null;
     }
 }
