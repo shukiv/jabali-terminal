@@ -182,19 +182,31 @@ Root on the host can still overwrite either the log or the `.sig`. The
 `.sig` value lets offline verification detect that tampering happened — we
 lose confidentiality but we don't lose detection.
 
-### 4.1 Browser view (optional)
+### 4.1 Browser view
 
-The panel ships a read-only "Terminal Sessions" Filament page that lists
-the last 100 transcripts and renders an individual transcript on demand
-(1 MiB cap, path whitelist enforced by the daemon — the page never
-receives raw HTML).
+The panel ships a read-only transcript browser as the second tab on
+`Pages\Terminal` (slug `/jabali-admin/terminal`). It lists the last 100
+sessions and renders an individual transcript on demand — 1 MiB cap +
+path whitelist enforced daemon-side, rendered through Blade's auto-
+escaping `<pre>` so arbitrary bytes written by the daemon cannot inject
+HTML.
 
-The page is gated by `sessions_ui_enabled` in `jabali-terminal.conf`
-(default `"true"`). Setting it to `"false"` hides the nav entry and
-unregisters the route; the daemon still writes and HMAC-seals every
-transcript, so the audit control in the table above is unaffected.
-Operators who read transcripts off-disk (or rsync them off-box) can
-disable the UI without loss of forensic capability.
+The tab inherits the Terminal page's middleware by construction:
+`auth:admin`, `PreventFramingMiddleware` (X-Frame-Options: DENY + CSP
+frame-ancestors 'none', SEC-REV-8), and `canAccess()` (`isAdmin()`).
+Tab switching is pure Alpine (no server round-trip), so `refreshSessions`
+/ `viewTranscript` / `closeTranscript` are the only Livewire-callable
+methods; each one re-runs `canAccess()` server-side as defense-in-depth
+against any scenario where the `admin` guard check is looser than the
+`isAdmin()` role check (e.g., a session whose role was revoked but
+whose cookie is still valid).
+
+The re-auth modal (password + 2FA) gates only the **Terminal** tab — it
+is never required for browsing transcripts. This mirrors the pre-0.1.1
+posture where the old separate Sessions page was cookie-only as well.
+Operators who prefer to read transcripts off-disk (or rsync them
+off-box) can ignore the tab entirely; the daemon still writes and
+HMAC-seals every transcript regardless of panel activity.
 
 ---
 

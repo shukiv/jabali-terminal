@@ -104,11 +104,17 @@ class Terminal extends Page
 
     public function refreshSessions(): void
     {
+        // Defense-in-depth: Filament's panel middleware already enforces
+        // auth:admin on Livewire XHRs, but canAccess() (isAdmin()) is not
+        // re-run automatically. Mirror the mount() gate so a session whose
+        // admin role was revoked mid-flight can't still read transcripts.
+        abort_unless(static::canAccess(), 403);
         $this->sessions = app(JabaliTerminalClient::class)->listSessions();
     }
 
     public function viewTranscript(string $name): void
     {
+        abort_unless(static::canAccess(), 403);
         // Re-validate on every call. The client + daemon both validate too,
         // but the Livewire property is attacker-controlled.
         if (! preg_match('/^[0-9A-Za-z._-]{1,128}\.log$/', $name)) {

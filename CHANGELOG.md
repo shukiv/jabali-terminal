@@ -13,14 +13,6 @@ default.
 
 ### Added
 
-- **`sessions_ui_enabled` config key** — new flag in
-  `/etc/jabali-terminal/jabali-terminal.conf`. Default `"true"` (shows
-  the Terminal Sessions audit-log browser, same as before). Set to
-  `"false"` to hide the Filament page + nav item. Logging is unaffected:
-  the daemon still writes every stdin/stdout transcript to
-  `/var/log/jabali-terminal/sessions/<id>.log` and HMAC-seals it on
-  close. Operators who prefer to read transcripts off-disk (or rsync
-  them off-box) can keep the panel nav clean.
 - **Root Terminal in the main nav** — moved out of the `Tools` group,
   positioned right after `Services` as a top-level entry.
 - **Conditional 2FA re-auth** — admins with Fortify 2FA provisioned
@@ -30,6 +22,18 @@ default.
 
 ### Changed
 
+- **Sessions merged into the Terminal page as a tab.** The old separate
+  `Pages\Sessions` Filament page (slug `/jabali-admin/terminal/sessions`)
+  is gone. Session transcripts now live as a second tab inside
+  `Pages\Terminal` — the page has `Terminal` and `Sessions` tabs,
+  switched client-side via Alpine (no server round-trip on tab change).
+  Upside: one less route + nav entry, audit tab inherits the Terminal
+  page's framebusting + CSP + `canAccess()` gate by construction, and
+  the re-auth modal remains tab-scoped (still required for the PTY side,
+  never required for browsing transcripts — same posture as the old
+  Sessions page). Livewire methods `refreshSessions` / `viewTranscript`
+  / `closeTranscript` on `Pages\Terminal` mirror `canAccess()` for
+  defense-in-depth on XHRs.
 - **Reverse proxy: Caddy instead of nginx.** `install.sh` now writes a
   marker-guarded block into `/etc/jabali/Caddyfile`. The panel has
   always been FrankenPHP/Caddy on `:8443` — the previous nginx include
