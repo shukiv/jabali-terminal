@@ -241,9 +241,19 @@
                                             @endif
                                         </td>
                                         <td class="px-3 py-2 text-end">
+                                            {{--
+                                                wire:click uses a plain single-quoted literal rather than @js(...)
+                                                because Livewire 4's parseOutMethodsAndParams (JS-side) chokes on
+                                                @js()'s \u0022-escaped JSON when routed through a Filament
+                                                component attribute bag — "illegal character U+0040" traces
+                                                back to the literal '@' surviving into the rendered attribute.
+                                                Safe: $session['name'] is bounded server-side to
+                                                [0-9A-Za-z._-]{1,128}\.log (see viewTranscript + getTranscript),
+                                                so there's nothing to escape inside single quotes.
+                                            --}}
                                             <x-filament::link
                                                 tag="button"
-                                                wire:click="viewTranscript(@js($session['name'] ?? ''))"
+                                                wire:click="viewTranscript('{{ $session['name'] ?? '' }}')"
                                                 icon="heroicon-o-eye"
                                             >
                                                 {{ __('View') }}
