@@ -151,7 +151,112 @@ class Terminal extends Page
         }
 
         $this->openName = $name;
-        $this->transcript = app(JabaliTerminalClient::class)->getTranscript($name);
+        $raw = app(JabaliTerminalClient::class)->getTranscript($name);
+        // The raw log is what the audit HMAC-sig was computed over and stays
+        // byte-accurate on disk — but what the browser shows doesn't have to
+        // be raw bytes interleaved with PTY control codes. renderTranscript()
+        // strips ANSI escape sequences and coalesces consecutive same-stream
+        // writes into single paragraphs so "dir<enter>" reads as one input
+        // line instead of eight per-keystroke [STDIN]/[STDOUT] pairs.
+        $this->transcript = $raw !== null ? static::renderTranscript($raw) : null;
+    }
+
+    /**
+     * Clean a raw audit transcript for browser display.
+     *
+     * Does NOT modify anything on disk — the daemon-sealed log stays bit-exact
+     * for forensic re-verification. This function only transforms the copy
+     * that rides back through the Livewire `$transcript` property. Two passes:
+     *   1. ANSI escape sequences (CSI, OSC, charset designators, bare ESC)
+     *      are stripped so "[?2004h", "[K", colour codes etc. don't show as
+     *      literal text in the <pre>.
+     *   2. Per-write [STDIN]/[STDOUT] labels are coalesced: consecutive writes
+     *      from the same stream collapse into one labelled block. A typed
+     *      "dir" used to show as 8 labelled lines (4 stdin keystrokes + 4
+     *      stdout echoes); it now shows as "[STDIN] dir\n[STDOUT] dir".
+     */
+    public static function renderTranscript(string $raw): string
+    {
+        // Pass 1 — strip ANSI / terminal control noise.
+        //   CSI: ESC [ params intermediates final
+        $clean = (string) preg_replace('/\x1b\[[0-?]*[ -\/]*[@-~]/', '', $raw);
+        //   OSC: ESC ] ... BEL  or  ESC ] ... ESC \
+        $clean = (string) preg_replace('/\x1b\].*?(?:\x07|\x1b\\\\)/s', '', $clean);
+        //   Charset / 2-char escapes: ESC ( B, ESC ) 0, ESC # 8, ...
+        $clean = (string) preg_replace('/\x1b[()#][@-~]/', '', $clean);
+        //   Any remaining bare ESC sequences.
+        $clean = (string) preg_replace('/\x1b[@-Z\\\\-_]/', '', $clean);
+        //   Lone CR (terminal overwrite) — keep CRLF, drop standalone \r.
+        $clean = (string) preg_replace('/\r(?!\n)/', '', $clean);
+
+        // Pass 2 — coalesce consecutive same-stream writes.
+        //
+        // Audit log format (from daemon/audit.py):
+        //   # Session start: ...
+        //   [STDOUT] <bytes that may span multiple lines>
+        //   [STDIN] <bytes>
+        //   # Session end: ...
+        //
+        // A label only appears at the start of a line that begins with
+        // "[STDIN] " or "[STDOUT] ". Lines without a label are continuations
+        // of the previous labelled chunk.
+        $lines = explode("\n", $clean);
+        $out = [];
+        $currentLabel = null;
+        $currentBuf = [];
+
+        $flush = static function () use (&$out, &$currentLabel, &$currentBuf): void {
+            if ($currentLabel === null) {
+                return;
+            }
+            // Trim both leading and trailing empty segments. A pure-ANSI
+            // chunk (e.g. "[STDOUT] \x1b[?2004l") leaves an empty first
+            // segment after pass 1; its continuation bytes on the next
+            // line are the real content and should be the first visible
+            // thing after the label.
+            $content = trim(implode("\n", $currentBuf), "\n");
+            if ($content === '') {
+                $currentBuf = [];
+                $currentLabel = null;
+
+                return;
+            }
+            $out[] = $currentLabel.' '.$content;
+            $currentBuf = [];
+            $currentLabel = null;
+        };
+
+        foreach ($lines as $line) {
+            if (str_starts_with($line, '# ')) {
+                $flush();
+                $out[] = $line;
+
+                continue;
+            }
+            if (str_starts_with($line, '[STDIN] ') || str_starts_with($line, '[STDOUT] ')) {
+                $label = str_starts_with($line, '[STDIN] ') ? '[STDIN]' : '[STDOUT]';
+                $rest = substr($line, strlen($label) + 1);
+                if ($label === $currentLabel) {
+                    $currentBuf[] = $rest;
+                } else {
+                    $flush();
+                    $currentLabel = $label;
+                    $currentBuf = [$rest];
+                }
+
+                continue;
+            }
+            // Continuation of the current labelled block (no label prefix).
+            if ($currentLabel !== null) {
+                $currentBuf[] = $line;
+            } else {
+                // Orphan line before any label — pass through.
+                $out[] = $line;
+            }
+        }
+        $flush();
+
+        return implode("\n", $out);
     }
 
     /**
