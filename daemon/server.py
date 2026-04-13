@@ -349,7 +349,21 @@ class TerminalServer:
                 self.config.audit_hmac_secret,
             )
 
-            # Register session
+            # Enforce one-session-per-admin (SEC-REV: Per-admin limit = 1)
+            # Close any previous sessions for this admin
+            previous_sessions = [
+                (sid, s) for sid, s in list(self.active_sessions.items())
+                if s["admin_id"] == token.admin_id
+            ]
+            for prev_sid, prev_session in previous_sessions:
+                try:
+                    await prev_session["ws"].close(code=1000, message="new session opened")
+                except Exception:
+                    pass
+                self.active_sessions.pop(prev_sid, None)
+                logger.info(f"Closed previous session {prev_sid} for admin_id={token.admin_id}")
+
+            # Register new session
             self.active_sessions[session_id] = {
                 "admin_id": token.admin_id,
                 "ip": client_ip,
