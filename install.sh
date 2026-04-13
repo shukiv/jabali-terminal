@@ -326,6 +326,16 @@ install_panel_files() {
                             "$PANEL_DIR/resources/css/jabali-terminal.css" \
                             "$PANEL_DIR/tests/Feature/TerminalAuthTest.php" 2>/dev/null || true
 
+    # Composer's optimized classmap caches every file it autoloaded at the
+    # last `composer install` — so when we rm legacy files (e.g. the old
+    # Pages/Sessions.php) the cache still includes them and Filament fatals
+    # on route registration ("Failed to open stream"). Regenerate so the
+    # classmap reflects disk. Run as www-data to match file ownership.
+    if command -v composer >/dev/null 2>&1; then
+        run_with_spinner "Regenerating composer autoload" \
+            bash -c "cd '$PANEL_DIR' && sudo -u www-data composer dump-autoload -o --no-interaction --quiet"
+    fi
+
     done_ok "Panel files installed"
 
     local npm_changed=0
