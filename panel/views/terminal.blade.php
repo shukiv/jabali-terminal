@@ -15,45 +15,33 @@
     --}}
     <div x-data="{ tab: 'terminal' }" class="flex flex-col gap-4">
         {{--
-            Tab bar is intentionally hand-rolled rather than using
-            <x-filament::tabs>: the Filament component decides the active
-            class at server-render time via a :active Blade prop, which
-            can't see Alpine state. A Livewire-driven $activeTab would
-            re-render the component tree and tear down the xterm canvas
-            on every tab switch. Styling below mirrors the Filament tab
-            look (border-bottom on active) using Tailwind + Alpine.
+            Uses Filament's <x-filament::tabs> + tabs.item to match the
+            pill-segmented look Server Settings and friends render. The
+            `alpine-active` prop on each item (Filament support component,
+            see vendor/filament/support/resources/views/components/tabs/item.blade.php)
+            toggles the `fi-active` class from Alpine state — no Livewire
+            round-trip, so the xterm canvas and WebSocket inside the
+            Terminal subtree are never re-rendered when switching tabs.
+            `contained` gives the segmented-control style; without it
+            you'd get the thin underline look (the previous hand-rolled
+            markup mimicked that, but users preferred the pills).
         --}}
-        <nav
-            role="tablist"
-            class="flex gap-6 border-b border-gray-200 dark:border-white/10"
-        >
-            <button
-                type="button"
-                role="tab"
+        <x-filament::tabs contained>
+            <x-filament::tabs.item
+                icon="heroicon-o-command-line"
                 x-on:click="tab = 'terminal'"
-                x-bind:aria-selected="tab === 'terminal'"
-                class="flex items-center gap-2 -mb-px border-b-2 px-1 py-3 text-sm font-medium transition"
-                :class="tab === 'terminal'
-                    ? 'border-primary-600 text-primary-600 dark:text-primary-400'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+                alpine-active="tab === 'terminal'"
             >
-                <x-filament::icon icon="heroicon-o-command-line" class="h-5 w-5" />
                 {{ __('Terminal') }}
-            </button>
-            <button
-                type="button"
-                role="tab"
+            </x-filament::tabs.item>
+            <x-filament::tabs.item
+                icon="heroicon-o-clock"
                 x-on:click="tab = 'sessions'"
-                x-bind:aria-selected="tab === 'sessions'"
-                class="flex items-center gap-2 -mb-px border-b-2 px-1 py-3 text-sm font-medium transition"
-                :class="tab === 'sessions'
-                    ? 'border-primary-600 text-primary-600 dark:text-primary-400'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+                alpine-active="tab === 'sessions'"
             >
-                <x-filament::icon icon="heroicon-o-clock" class="h-5 w-5" />
                 {{ __('Sessions') }}
-            </button>
-        </nav>
+            </x-filament::tabs.item>
+        </x-filament::tabs>
 
         {{-- ───────── Terminal tab ───────── --}}
         <div
