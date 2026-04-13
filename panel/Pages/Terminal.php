@@ -189,7 +189,7 @@ class Terminal extends Page
         //   Lone CR (terminal overwrite) — keep CRLF, drop standalone \r.
         $clean = (string) preg_replace('/\r(?!\n)/', '', $clean);
 
-        // Pass 2 — coalesce consecutive same-stream writes.
+        // Pass 2 — parse the raw log into one entry per daemon write.
         //
         // Audit log format (from daemon/audit.py):
         //   # Session start: ...
@@ -199,64 +199,132 @@ class Terminal extends Page
         //
         // A label only appears at the start of a line that begins with
         // "[STDIN] " or "[STDOUT] ". Lines without a label are continuations
-        // of the previous labelled chunk.
+        // of the previous write's bytes (the write contained an embedded
+        // newline). Crucially we do NOT coalesce separate writes here:
+        // pass 3 needs to see individual writes so it can pair STDIN
+        // keystrokes with their STDOUT echoes exactly. Coalescing for
+        // display happens in pass 4 after folding.
         $lines = explode("\n", $clean);
-        $out = [];
-        $currentLabel = null;
-        $currentBuf = [];
+        // Each entry is either ['comment', '# ...'] or ['label', content].
+        $entries = [];
+        $openLabel = null; // label for the write currently being accumulated
+        $openBuf = [];
 
-        $flush = static function () use (&$out, &$currentLabel, &$currentBuf): void {
-            if ($currentLabel === null) {
+        $commitOpen = static function () use (&$entries, &$openLabel, &$openBuf): void {
+            if ($openLabel === null) {
                 return;
             }
-            // Trim both leading and trailing empty segments. A pure-ANSI
-            // chunk (e.g. "[STDOUT] \x1b[?2004l") leaves an empty first
-            // segment after pass 1; its continuation bytes on the next
-            // line are the real content and should be the first visible
-            // thing after the label.
-            $content = trim(implode("\n", $currentBuf), "\n");
-            if ($content === '') {
-                $currentBuf = [];
-                $currentLabel = null;
-
-                return;
+            // Trim both ends — a pure-ANSI write stripped clean can leave
+            // blank leading or trailing segments.
+            $content = trim(implode("\n", $openBuf), "\n");
+            if ($content !== '') {
+                $entries[] = [$openLabel, $content];
             }
-            $out[] = $currentLabel.' '.$content;
-            $currentBuf = [];
-            $currentLabel = null;
+            $openLabel = null;
+            $openBuf = [];
         };
 
         foreach ($lines as $line) {
             if (str_starts_with($line, '# ')) {
-                $flush();
-                $out[] = $line;
+                $commitOpen();
+                $entries[] = ['comment', $line];
 
                 continue;
             }
             if (str_starts_with($line, '[STDIN] ') || str_starts_with($line, '[STDOUT] ')) {
-                $label = str_starts_with($line, '[STDIN] ') ? '[STDIN]' : '[STDOUT]';
-                $rest = substr($line, strlen($label) + 1);
-                if ($label === $currentLabel) {
-                    $currentBuf[] = $rest;
-                } else {
-                    $flush();
-                    $currentLabel = $label;
-                    $currentBuf = [$rest];
-                }
+                $commitOpen();
+                $openLabel = str_starts_with($line, '[STDIN] ') ? '[STDIN]' : '[STDOUT]';
+                $openBuf = [substr($line, strlen($openLabel) + 1)];
 
                 continue;
             }
-            // Continuation of the current labelled block (no label prefix).
-            if ($currentLabel !== null) {
-                $currentBuf[] = $line;
+            // Continuation of the current write (no label prefix).
+            if ($openLabel !== null) {
+                $openBuf[] = $line;
             } else {
-                // Orphan line before any label — pass through.
-                $out[] = $line;
+                // Orphan line before any label — preserve.
+                $entries[] = ['orphan', $line];
             }
         }
-        $flush();
+        $commitOpen();
 
-        return implode("\n", $out);
+        // Pass 3 — fold cooked-echo pairs.
+        //
+        // Interactive shells run the PTY in cooked+echo mode: every keystroke
+        // produces a [STDIN] write followed immediately by a [STDOUT] write
+        // with identical bytes (the terminal echoing what was typed). The
+        // echo is noise for the reader — "ls -l" otherwise renders as 10
+        // alternating single-char lines. Only folds on exact match, so
+        // non-echo scenarios (password entry, tab-completion that emits
+        // different bytes than the keystroke) are left intact with both
+        // sides visible.
+        $folded = [];
+        $n = count($entries);
+        for ($i = 0; $i < $n; $i++) {
+            [$label, $content] = $entries[$i];
+            if ($label === '[STDIN]'
+                && $i + 1 < $n
+                && $entries[$i + 1][0] === '[STDOUT]'
+                && $entries[$i + 1][1] === $content
+            ) {
+                $folded[] = ['[STDIN]', $content];
+                $i++; // skip the matching [STDOUT] echo
+                continue;
+            }
+            $folded[] = [$label, $content];
+        }
+
+        // Pass 4 — coalesce for display.
+        // Merge consecutive entries with the same stream label into one
+        // labelled block. Comments and orphans pass through as separators.
+        // This turns a run of single-char [STDIN] entries (produced by the
+        // fold) into a single "[STDIN] ls -l" line, and glues multi-write
+        // [STDOUT] command output into one block.
+        $outLines = [];
+        $pendingLabel = null;
+        $pendingParts = [];
+        $flushPending = static function () use (&$outLines, &$pendingLabel, &$pendingParts): void {
+            if ($pendingLabel === null) {
+                return;
+            }
+            // Join separate same-stream writes with "\n": each write is a
+            // logical output burst (e.g. command output and the next prompt
+            // come from distinct daemon writes), and the trailing \n on each
+            // write was trimmed in commitOpen so we have to add it back.
+            // For the folded keystroke case ([STDIN] "ls", "-l"), the
+            // single-char contents have no newlines and join cleanly.
+            $parts = $pendingParts;
+            if ($pendingLabel === '[STDIN]') {
+                // Folded keystrokes — glue with no separator so "ls -l"
+                // stays on one line.
+                $joined = implode('', $parts);
+            } else {
+                // Output bursts — restore the newline between writes.
+                $joined = implode("\n", $parts);
+            }
+            $outLines[] = $pendingLabel.' '.$joined;
+            $pendingLabel = null;
+            $pendingParts = [];
+        };
+
+        foreach ($folded as [$label, $content]) {
+            if ($label === 'comment' || $label === 'orphan') {
+                $flushPending();
+                $outLines[] = $content;
+
+                continue;
+            }
+            if ($label === $pendingLabel) {
+                $pendingParts[] = $content;
+            } else {
+                $flushPending();
+                $pendingLabel = $label;
+                $pendingParts = [$content];
+            }
+        }
+        $flushPending();
+
+        return implode("\n", $outLines);
     }
 
     /**
