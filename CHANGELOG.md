@@ -60,6 +60,29 @@ default.
   with a `class_exists()` guard so the panel still boots when the addon
   is uninstalled.
 
+### Security
+
+- **Defense-in-depth canAccess() on Sessions Livewire methods.**
+  `refreshSessions` and `viewTranscript` on `Pages\Terminal` now re-run
+  `abort_unless(static::canAccess(), 403)` on every Livewire XHR, not
+  just on initial mount. Filament 4's `canAccess()` is not
+  automatically re-invoked on Livewire method calls; without this, a
+  session whose admin role was revoked mid-flight (cookie still valid,
+  `isAdmin()` now false) could keep reading transcripts until the
+  cookie expired.
+- **Livewire rate limit on transcript calls.** 60/min per (admin, ip)
+  on `refreshSessions` and `viewTranscript`. The `POST /terminal/session`
+  mint route was already bounded at 3/min; this closes the corresponding
+  gap on the audit surface so a compromised admin session can't use
+  unlimited Livewire XHRs to flood the daemon's unix socket. 429s bubble
+  up as "too many transcript requests, wait a minute".
+- **Panel-side transcript-name check mirrors the daemon's `".."`
+  substring rejection.** No traversal risk existed before — the charset
+  already excluded `/`, and the daemon's `realpath`+`startswith` chroot
+  was authoritative — but matching the daemon's idiom 1:1 (`str_contains
+  $name, '..'`) keeps the posture consistent between panel and daemon
+  and quiets static-analysis scanners.
+
 ### Fixed
 
 - **Blank xterm.js on every connect.** xterm.js 5.x does not ship a

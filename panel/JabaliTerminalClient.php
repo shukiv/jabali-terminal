@@ -75,9 +75,13 @@ class JabaliTerminalClient
         if (! $this->socketPath || ! file_exists($this->socketPath)) {
             return null;
         }
-        // Guard rail: the daemon applies its own regex, but do not let
-        // arbitrary strings through the URL-encoding path either.
-        if (! preg_match('/^[0-9A-Za-z._-]{1,128}\.log$/', $name)) {
+        // Guard rail: the daemon applies its own regex + ".." substring
+        // check + os.path.realpath chroot, but do not let arbitrary strings
+        // through the URL-encoding path either. The explicit ".." check
+        // mirrors the daemon's idiom 1:1 — the charset already excludes
+        // /, but rejecting any run of two dots keeps static scanners
+        // happy and matches the authoritative server posture.
+        if (str_contains($name, '..') || ! preg_match('/^[0-9A-Za-z._-]{1,128}\.log$/', $name)) {
             return null;
         }
 

@@ -8,6 +8,7 @@ use App\JabaliTerminal\Http\PreventFramingMiddleware;
 use App\JabaliTerminal\JabaliTerminalClient;
 use BackedEnum;
 use Filament\Pages\Page;
+use Illuminate\Support\Facades\RateLimiter;
 use UnitEnum;
 
 /**
@@ -109,20 +110,42 @@ class Terminal extends Page
         // re-run automatically. Mirror the mount() gate so a session whose
         // admin role was revoked mid-flight can't still read transcripts.
         abort_unless(static::canAccess(), 403);
+        $this->throttleTranscriptCall('refresh');
         $this->sessions = app(JabaliTerminalClient::class)->listSessions();
     }
 
     public function viewTranscript(string $name): void
     {
         abort_unless(static::canAccess(), 403);
+        $this->throttleTranscriptCall('view');
         // Re-validate on every call. The client + daemon both validate too,
-        // but the Livewire property is attacker-controlled.
-        if (! preg_match('/^[0-9A-Za-z._-]{1,128}\.log$/', $name)) {
+        // but the Livewire property is attacker-controlled. Mirror the
+        // daemon's substring check on ".." (belt-and-suspenders — the
+        // charset excludes / already, but two dots in a row trigger
+        // path-traversal scanners and don't correspond to any legitimate
+        // filename the daemon produces).
+        if (str_contains($name, '..') || ! preg_match('/^[0-9A-Za-z._-]{1,128}\.log$/', $name)) {
             return;
         }
 
         $this->openName = $name;
         $this->transcript = app(JabaliTerminalClient::class)->getTranscript($name);
+    }
+
+    /**
+     * Rate-limit Livewire methods that hit the daemon — 60/min per admin+ip.
+     * The daemon has its own timeouts and caps, but a compromised admin
+     * session shouldn't be able to flood the unix socket either; this keeps
+     * the surface bounded the same way the mint route is bounded (3/min).
+     * 60/min is loose enough for a legitimate admin scanning transcripts.
+     */
+    private function throttleTranscriptCall(string $bucket): void
+    {
+        $key = 'jt-transcript:'.$bucket.':'.auth()->id().':'.request()->ip();
+        if (RateLimiter::tooManyAttempts($key, 60)) {
+            abort(429, 'too many transcript requests, wait a minute');
+        }
+        RateLimiter::hit($key, 60);
     }
 
     public function closeTranscript(): void
