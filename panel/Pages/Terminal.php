@@ -114,17 +114,39 @@ class Terminal extends Page
         $this->sessions = app(JabaliTerminalClient::class)->listSessions();
     }
 
+    /**
+     * Open the transcript for a session by its index into $this->sessions.
+     * The blade uses this (not viewTranscript) because passing a numeric
+     * index through `wire:click="method(N)"` parses cleanly in Livewire 4
+     * regardless of surrounding component chrome — no string escaping,
+     * no @js() directives, no Filament component attribute-bag oddities.
+     * The string-based viewTranscript() is still here for the feature
+     * test suite + CLI / direct Livewire calls.
+     */
+    public function viewTranscriptAt(int $index): void
+    {
+        abort_unless(static::canAccess(), 403);
+        $this->throttleTranscriptCall('view');
+        $name = (string) ($this->sessions[$index]['name'] ?? '');
+        $this->loadTranscript($name);
+    }
+
     public function viewTranscript(string $name): void
     {
         abort_unless(static::canAccess(), 403);
         $this->throttleTranscriptCall('view');
+        $this->loadTranscript($name);
+    }
+
+    private function loadTranscript(string $name): void
+    {
         // Re-validate on every call. The client + daemon both validate too,
         // but the Livewire property is attacker-controlled. Mirror the
         // daemon's substring check on ".." (belt-and-suspenders — the
         // charset excludes / already, but two dots in a row trigger
         // path-traversal scanners and don't correspond to any legitimate
         // filename the daemon produces).
-        if (str_contains($name, '..') || ! preg_match('/^[0-9A-Za-z._-]{1,128}\.log$/', $name)) {
+        if ($name === '' || str_contains($name, '..') || ! preg_match('/^[0-9A-Za-z._-]{1,128}\.log$/', $name)) {
             return;
         }
 

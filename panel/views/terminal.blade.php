@@ -242,22 +242,23 @@
                                         </td>
                                         <td class="px-3 py-2 text-end">
                                             {{--
-                                                wire:click uses a plain single-quoted literal rather than @js(...)
-                                                because Livewire 4's parseOutMethodsAndParams (JS-side) chokes on
-                                                @js()'s \u0022-escaped JSON when routed through a Filament
-                                                component attribute bag — "illegal character U+0040" traces
-                                                back to the literal '@' surviving into the rendered attribute.
-                                                Safe: $session['name'] is bounded server-side to
-                                                [0-9A-Za-z._-]{1,128}\.log (see viewTranscript + getTranscript),
-                                                so there's nothing to escape inside single quotes.
+                                                Plain <button> rather than <x-filament::link tag="button">:
+                                                the Filament link component's attribute bag didn't forward
+                                                wire:click reliably in some Filament 5 builds when tag=button,
+                                                and passing a string argument was also suspect in Livewire 4's
+                                                parser. Switched to a pure numeric-index call — bulletproof
+                                                regardless of Filament / Livewire version chrome. The PHP side
+                                                (viewTranscriptAt) looks the name up from $this->sessions[$i]
+                                                and delegates to the same validation path viewTranscript uses.
                                             --}}
-                                            <x-filament::link
-                                                tag="button"
-                                                wire:click="viewTranscript('{{ $session['name'] ?? '' }}')"
-                                                icon="heroicon-o-eye"
+                                            <button
+                                                type="button"
+                                                wire:click="viewTranscriptAt({{ $loop->index }})"
+                                                class="inline-flex items-center gap-1 text-sm font-medium text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
                                             >
+                                                <x-filament::icon icon="heroicon-o-eye" class="h-4 w-4" />
                                                 {{ __('View') }}
-                                            </x-filament::link>
+                                            </button>
                                         </td>
                                     </tr>
                                 @endforeach
