@@ -1,0 +1,16 @@
+parameters:
+    level: 0
+    # Panel PHP is deployed INTO the main jabali Filament app at install
+    # time. Bootstrap from jabali's autoload so Laravel/Filament/AgentClient
+    # classes resolve and we see only the real issues, not missing-framework noise.
+    bootstrapFiles:
+        - ../../jabali/vendor/autoload.php
+    paths:
+        - .
+    excludePaths:
+        - vendor/*
+        - tests/*
+    shipmonkDeadCode:
+        usageExcluders:
+            tests:
+                enabled: true

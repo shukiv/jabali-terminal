@@ -12,3 +12,6 @@ build/
 # Populated config (secrets) must never be committed.
 configs/jabali-terminal.conf
 .claude/
+
+# composer-generated vendor tree in the panel subproject
+panel/vendor/
